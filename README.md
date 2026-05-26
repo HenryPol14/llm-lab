@@ -13,3 +13,18 @@ cp cloud-init/user-data.yaml \
 ./scripts/create-llm-vm.sh 110
 5. Мониторинг
 ./scripts/monitor-llm.sh 110
+
+Структура проекта
+proxmox-llm-lab/
+├── scripts/
+│   ├── create-template.sh
+│   ├── create-llm-vm.sh
+│   ├── monitor-llm.sh
+│   └── lib/
+│       └── common.sh
+│
+├── cloud-init/
+│   ├── user-data.yaml
+│   └── meta-data.yaml
+│
+└── logs/
