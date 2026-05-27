@@ -50,7 +50,7 @@ cp config/lab.env.example config/lab.env
 
 Storage разделён намеренно: template и `llm-server` создаются на `SSD-VMs`, а `monitoring-vm` создаётся на `local-lvm`.
 
-3. Запустите bootstrap с локальной машины:
+1. Запустите bootstrap с локальной машины:
 
 ```bash
 ./scripts/bootstrap-remote.sh

@@ -1,0 +1,42 @@
+# =========================
+# Основной вход на Proxmox
+# =========================
+
+Host ai-off
+    HostName 77.50.132.85
+    Port 60022
+    User root
+    IdentityFile ~/.ssh/ai-off-id
+
+    RequestTTY yes
+
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    TCPKeepAlive yes
+
+
+# =========================
+# Tunnel-only подключение
+# Для Ollama и Open WebUI
+# =========================
+
+Host ai-llm
+    HostName 77.50.132.85
+    Port 60022
+    User root
+    IdentityFile ~/.ssh/ai-off-id
+
+    # tunnel-only режим
+    RequestTTY no
+    SessionType none
+
+    # Ollama API
+    LocalForward 11434 10.10.10.50:11434
+
+    # Open WebUI
+    LocalForward 3000 10.10.10.50:3000
+
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    TCPKeepAlive yes
+    
