@@ -33,7 +33,46 @@ else
   qm clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
 fi
 
-qm resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || true
+qm guest exec "$LLM_VMID" -- bash -lc '
+  set -Eeuo pipefail
+
+  DISK=/dev/sdb
+  PART=/dev/sdb1
+  MOUNT=/mnt/ai-data
+
+  if [[ -b "$DISK" ]]; then
+
+    if ! blkid "$PART" >/dev/null 2>&1; then
+      echo "[INFO] Partitioning data disk"
+
+      sgdisk -o "$DISK"
+      sgdisk -n 1:0:0 -t 1:8300 "$DISK"
+
+      partprobe "$DISK"
+      sleep 2
+
+      mkfs.ext4 -F -L ai-data "$PART"
+    fi
+
+    UUID=$(blkid -s UUID -o value "$PART")
+
+    mkdir -p "$MOUNT"
+
+    if ! grep -q "$UUID" /etc/fstab; then
+      echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
+    fi
+
+    mount -a
+
+    mkdir -p \
+      $MOUNT/docker \
+      $MOUNT/ollama \
+      $MOUNT/models
+
+    chown -R ubuntu:ubuntu "$MOUNT"
+
+    echo "[INFO] Data disk mounted to $MOUNT"
+  fi
 
 qm set "$LLM_VMID" \
   --name "$LLM_NAME" \
