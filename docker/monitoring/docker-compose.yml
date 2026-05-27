@@ -13,7 +13,7 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
-      - prometheus:/prometheus
+      - /mnt/monitoring-data/prometheus:/prometheus
 
   grafana:
     image: grafana/grafana:latest
@@ -26,7 +26,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
-      - grafana:/var/lib/grafana
+      - /mnt/monitoring-data/grafana:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
 
@@ -55,7 +55,3 @@ services:
       - "9100:9100"
     volumes:
       - /:/host:ro,rslave
-
-volumes:
-  prometheus:
-  grafana:

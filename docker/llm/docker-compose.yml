@@ -6,7 +6,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - ollama:/root/.ollama
+      - /mnt/llm-data/ollama:/root/.ollama
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       NVIDIA_VISIBLE_DEVICES: all
@@ -24,7 +24,7 @@ services:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
     volumes:
-      - openwebui:/app/backend/data
+      - /mnt/llm-data/openwebui:/app/backend/data
 
   node-exporter:
     image: prom/node-exporter:latest
@@ -50,8 +50,4 @@ services:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     gpus: all
-
-volumes:
-  ollama:
-  openwebui:
 

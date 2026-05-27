@@ -6,7 +6,7 @@ require_root
 MONITORING_VMID="${MONITORING_VMID:-120}"
 MONITORING_NAME="${MONITORING_NAME:-monitoring-vm}"
 TEMPLATE_VMID="${TEMPLATE_VMID:-9000}"
-STORAGE="${STORAGE:-local-lvm}"
+MONITORING_STORAGE="${MONITORING_STORAGE:-local-lvm}"
 INTERNAL_BRIDGE="${INTERNAL_BRIDGE:-vmbr1}"
 INTERNAL_GATEWAY="${INTERNAL_GATEWAY:-10.10.10.1}"
 DNS_SERVER="${DNS_SERVER:-1.1.1.1}"
@@ -14,17 +14,22 @@ MONITORING_IP="${MONITORING_IP:-10.10.10.60}"
 MONITORING_PREFIX="${MONITORING_PREFIX:-24}"
 MONITORING_MEMORY_MB="${MONITORING_MEMORY_MB:-8192}"
 MONITORING_CORES="${MONITORING_CORES:-4}"
-MONITORING_SYSTEM_DISK_GB="$(normalize_gb "${MONITORING_SYSTEM_DISK_GB:-64}")"
-MONITORING_DATA_DISK_GB="$(normalize_gb "${MONITORING_DATA_DISK_GB:-120}")"
+MONITORING_SYSTEM_DISK_GB="$(normalize_gb "${MONITORING_SYSTEM_DISK_GB:-40}")"
+MONITORING_DATA_DISK_GB="$(normalize_gb "${MONITORING_DATA_DISK_GB:-100}")"
 
 require_cmd qm
 vm_exists "$TEMPLATE_VMID" || die "Template ${TEMPLATE_VMID} not found"
 
 if vm_exists "$MONITORING_VMID"; then
   info "VM ${MONITORING_VMID} already exists. Updating configuration."
+  CURRENT_DISKS="$(qm config "$MONITORING_VMID" | awk -F'[: ,]+' '/^(scsi0|scsi1):/ {print $2}' | paste -sd ' ' -)"
+  if [[ -n "$CURRENT_DISKS" ]] && ! grep -q "${MONITORING_STORAGE}:" <<<"$CURRENT_DISKS"; then
+    warn "VM ${MONITORING_VMID} already has disks outside ${MONITORING_STORAGE}: ${CURRENT_DISKS}"
+    warn "The script will not move existing disks automatically. Recreate the VM or move disks manually with qm move_disk."
+  fi
 else
-  info "Cloning template ${TEMPLATE_VMID} to VM ${MONITORING_VMID}"
-  qm clone "$TEMPLATE_VMID" "$MONITORING_VMID" --name "$MONITORING_NAME" --full true
+  info "Cloning template ${TEMPLATE_VMID} to VM ${MONITORING_VMID} on ${MONITORING_STORAGE}"
+  qm clone "$TEMPLATE_VMID" "$MONITORING_VMID" --name "$MONITORING_NAME" --full true --storage "$MONITORING_STORAGE"
 fi
 
 qm resize "$MONITORING_VMID" scsi0 "${MONITORING_SYSTEM_DISK_GB}G" || true
@@ -42,7 +47,7 @@ qm set "$MONITORING_VMID" \
   --nameserver "$DNS_SERVER"
 
 if ! qm config "$MONITORING_VMID" | grep -q '^scsi1:'; then
-  qm set "$MONITORING_VMID" --scsi1 "${STORAGE}:${MONITORING_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
+  qm set "$MONITORING_VMID" --scsi1 "${MONITORING_STORAGE}:${MONITORING_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
 fi
 
 if vm_running "$MONITORING_VMID"; then
@@ -77,4 +82,3 @@ qm guest exec "$MONITORING_VMID" -- bash -lc '
 ssh-keygen -R "$MONITORING_IP" >/dev/null 2>&1 || true
 ssh-keyscan -H "$MONITORING_IP" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 info "Monitoring VM is ready: ssh ubuntu@${MONITORING_IP}"
-
