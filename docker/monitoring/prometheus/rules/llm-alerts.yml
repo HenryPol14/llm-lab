@@ -1,0 +1,37 @@
+groups:
+  - name: llm-lab
+    rules:
+      - alert: LLMNodeExporterDown
+        expr: up{job="llm-node"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: LLM node exporter is down
+
+      - alert: LLMGPUExporterDown
+        expr: up{job="llm-gpu"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: LLM GPU exporter is down
+
+      - alert: LLMHttpEndpointDown
+        expr: probe_success{job="llm-http"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: LLM HTTP endpoint is down
+          endpoint: "{{ $labels.instance }}"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: High memory usage
+          instance: "{{ $labels.instance }}"
+

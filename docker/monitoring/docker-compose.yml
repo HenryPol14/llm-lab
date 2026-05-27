@@ -1,0 +1,61 @@
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus:/prometheus
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    ports:
+      - "9115:9115"
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: monitoring-node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    pid: host
+    ports:
+      - "9100:9100"
+    volumes:
+      - /:/host:ro,rslave
+
+volumes:
+  prometheus:
+  grafana:

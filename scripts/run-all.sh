@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+"${SCRIPT_DIR}/01-install-proxmox-tools.sh"
+"${SCRIPT_DIR}/02-enable-iommu.sh"
+"${SCRIPT_DIR}/03-configure-network.sh"
+"${SCRIPT_DIR}/04-download-cloud-image.sh"
+"${SCRIPT_DIR}/05-create-cloudinit-template.sh"
+"${SCRIPT_DIR}/06-create-llm-vm.sh"
+"${SCRIPT_DIR}/07-create-monitoring-vm.sh"
+"${SCRIPT_DIR}/08-install-guest-runtime.sh" "${LLM_IP:-}"
+"${SCRIPT_DIR}/09-install-nvidia-toolkit.sh" "${LLM_IP:-}"
+"${SCRIPT_DIR}/08-install-guest-runtime.sh" "${MONITORING_IP:-}"
+"${SCRIPT_DIR}/10-deploy-llm-stack.sh" "${LLM_IP:-}"
+"${SCRIPT_DIR}/11-deploy-monitoring-stack.sh" "${MONITORING_IP:-}"
+"${SCRIPT_DIR}/monitor-llm.sh"
+
