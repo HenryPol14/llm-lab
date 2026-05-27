@@ -36,6 +36,12 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
+require_pve_storage() {
+  local storage="$1"
+  require_cmd pvesm
+  pvesm status | awk 'NR > 1 {print $1}' | grep -qxF "$storage" || die "Proxmox storage not found: $storage"
+}
+
 install_missing_packages() {
   local missing=()
   local pkg

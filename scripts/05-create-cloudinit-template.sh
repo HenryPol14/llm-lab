@@ -4,7 +4,7 @@ load_config
 require_root
 
 TEMPLATE_VMID="${TEMPLATE_VMID:-9000}"
-STORAGE="${STORAGE:-local-lvm}"
+TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-${STORAGE:-SSD-VMs}}"
 UBUNTU_IMAGE_PATH="${UBUNTU_IMAGE_PATH:-/var/lib/vz/template/qcow2/ubuntu-noble.img}"
 PREPARED_IMAGE_PATH="${PREPARED_IMAGE_PATH:-/var/lib/vz/template/qcow2/ubuntu-noble-llm-prepared.img}"
 SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-$HOME/.ssh/id_rsa.pub}"
@@ -12,6 +12,7 @@ INTERNAL_BRIDGE="${INTERNAL_BRIDGE:-vmbr1}"
 
 require_cmd qm
 require_cmd virt-customize
+require_pve_storage "$TEMPLATE_STORAGE"
 [[ -f "$UBUNTU_IMAGE_PATH" ]] || die "Cloud image not found: $UBUNTU_IMAGE_PATH"
 [[ -f "$SSH_PUBLIC_KEY" ]] || die "SSH public key not found: $SSH_PUBLIC_KEY"
 
@@ -54,11 +55,11 @@ qm create "$TEMPLATE_VMID" \
   --agent enabled=1 \
   --net0 "virtio,bridge=${INTERNAL_BRIDGE}"
 
-qm set "$TEMPLATE_VMID" --efidisk0 "${STORAGE}:0,efitype=4m,pre-enrolled-keys=0"
-qm importdisk "$TEMPLATE_VMID" "$PREPARED_IMAGE_PATH" "$STORAGE"
+qm set "$TEMPLATE_VMID" --efidisk0 "${TEMPLATE_STORAGE}:0,efitype=4m,pre-enrolled-keys=0"
+qm importdisk "$TEMPLATE_VMID" "$PREPARED_IMAGE_PATH" "$TEMPLATE_STORAGE"
 DISK_VOL="$(qm config "$TEMPLATE_VMID" | awk '/unused0:/ {print $2}' | cut -d, -f1)"
 qm set "$TEMPLATE_VMID" --scsihw virtio-scsi-single --scsi0 "${DISK_VOL},discard=on,ssd=1"
-qm set "$TEMPLATE_VMID" --ide2 "${STORAGE}:cloudinit"
+qm set "$TEMPLATE_VMID" --ide2 "${TEMPLATE_STORAGE}:cloudinit"
 qm set "$TEMPLATE_VMID" --boot order=scsi0
 qm set "$TEMPLATE_VMID" --serial0 socket --vga serial0
 qm set "$TEMPLATE_VMID" --ciuser ubuntu --sshkey "$SSH_PUBLIC_KEY" --ipconfig0 ip=dhcp

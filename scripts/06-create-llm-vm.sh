@@ -6,7 +6,7 @@ require_root
 LLM_VMID="${LLM_VMID:-110}"
 LLM_NAME="${LLM_NAME:-llm-server}"
 TEMPLATE_VMID="${TEMPLATE_VMID:-9000}"
-STORAGE="${STORAGE:-local-lvm}"
+LLM_STORAGE="${LLM_STORAGE:-${STORAGE:-SSD-VMs}}"
 INTERNAL_BRIDGE="${INTERNAL_BRIDGE:-vmbr1}"
 INTERNAL_GATEWAY="${INTERNAL_GATEWAY:-10.10.10.1}"
 DNS_SERVER="${DNS_SERVER:-1.1.1.1}"
@@ -18,13 +18,19 @@ LLM_SYSTEM_DISK_GB="$(normalize_gb "${LLM_SYSTEM_DISK_GB:-64}")"
 LLM_DATA_DISK_GB="$(normalize_gb "${LLM_DATA_DISK_GB:-200}")"
 
 require_cmd qm
+require_pve_storage "$LLM_STORAGE"
 vm_exists "$TEMPLATE_VMID" || die "Template ${TEMPLATE_VMID} not found"
 
 if vm_exists "$LLM_VMID"; then
   info "VM ${LLM_VMID} already exists. Updating configuration."
+  WRONG_DISKS="$(qm config "$LLM_VMID" | awk -F'[: ,]+' -v storage="${LLM_STORAGE}" '/^(scsi0|scsi1):/ && $2 !~ "^" storage ":" {print $1 ":" $2}' | paste -sd ' ' -)"
+  if [[ -n "$WRONG_DISKS" ]]; then
+    warn "VM ${LLM_VMID} already has disks outside ${LLM_STORAGE}: ${WRONG_DISKS}"
+    warn "The script will not move existing disks automatically. Recreate the VM or move disks manually with qm move_disk."
+  fi
 else
-  info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID}"
-  qm clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true
+  info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
+  qm clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
 fi
 
 qm resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || true
@@ -43,7 +49,7 @@ qm set "$LLM_VMID" \
   --nameserver "$DNS_SERVER"
 
 if ! qm config "$LLM_VMID" | grep -q '^scsi1:'; then
-  qm set "$LLM_VMID" --scsi1 "${STORAGE}:${LLM_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
+  qm set "$LLM_VMID" --scsi1 "${LLM_STORAGE}:${LLM_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
 fi
 
 GPU_ADDR="${GPU_PCI_ADDR:-}"
@@ -97,4 +103,3 @@ qm guest exec "$LLM_VMID" -- bash -lc '
 ssh-keygen -R "$LLM_IP" >/dev/null 2>&1 || true
 ssh-keyscan -H "$LLM_IP" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 info "LLM VM is ready: ssh ubuntu@${LLM_IP}"
-

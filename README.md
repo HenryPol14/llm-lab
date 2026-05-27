@@ -41,10 +41,14 @@ cp config/lab.env.example config/lab.env
 - `PROXMOX_HOST=77.50.132.85`
 - `PROXMOX_USER=root`
 - `SSH_PUBLIC_KEY`
-- `STORAGE`
+- `TEMPLATE_STORAGE=SSD-VMs`
+- `LLM_STORAGE=SSD-VMs`
+- `MONITORING_STORAGE=local-lvm`
 - `WAN_BRIDGE`
 - `INTERNAL_BRIDGE`
 - IP-адреса VM.
+
+Storage разделён намеренно: template и `llm-server` создаются на `SSD-VMs`, а `monitoring-vm` создаётся на `local-lvm`.
 
 3. Запустите bootstrap с локальной машины:
 

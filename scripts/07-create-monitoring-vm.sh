@@ -18,13 +18,14 @@ MONITORING_SYSTEM_DISK_GB="$(normalize_gb "${MONITORING_SYSTEM_DISK_GB:-40}")"
 MONITORING_DATA_DISK_GB="$(normalize_gb "${MONITORING_DATA_DISK_GB:-100}")"
 
 require_cmd qm
+require_pve_storage "$MONITORING_STORAGE"
 vm_exists "$TEMPLATE_VMID" || die "Template ${TEMPLATE_VMID} not found"
 
 if vm_exists "$MONITORING_VMID"; then
   info "VM ${MONITORING_VMID} already exists. Updating configuration."
-  CURRENT_DISKS="$(qm config "$MONITORING_VMID" | awk -F'[: ,]+' '/^(scsi0|scsi1):/ {print $2}' | paste -sd ' ' -)"
-  if [[ -n "$CURRENT_DISKS" ]] && ! grep -q "${MONITORING_STORAGE}:" <<<"$CURRENT_DISKS"; then
-    warn "VM ${MONITORING_VMID} already has disks outside ${MONITORING_STORAGE}: ${CURRENT_DISKS}"
+  WRONG_DISKS="$(qm config "$MONITORING_VMID" | awk -F'[: ,]+' -v storage="${MONITORING_STORAGE}" '/^(scsi0|scsi1):/ && $2 !~ "^" storage ":" {print $1 ":" $2}' | paste -sd ' ' -)"
+  if [[ -n "$WRONG_DISKS" ]]; then
+    warn "VM ${MONITORING_VMID} already has disks outside ${MONITORING_STORAGE}: ${WRONG_DISKS}"
     warn "The script will not move existing disks automatically. Recreate the VM or move disks manually with qm move_disk."
   fi
 else
