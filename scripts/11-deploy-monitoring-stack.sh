@@ -2,22 +2,122 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 
-TARGET="${1:-${MONITORING_IP:-10.10.10.60}}"
+TARGET="${1:-${MONITORING_IP:-${LLM_IP:-}}}"
+if [[ -z "$TARGET" ]]; then
+  die "Target IP required"
+fi
+
 REMOTE_STACK=/opt/monitoring-stack
+STACK_NAME=monitoring-stack
 
-info "Rendering Prometheus config for LLM target ${LLM_IP:-10.10.10.50}"
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-cp -R "${PROJECT_ROOT}/docker/monitoring/." "$TMP_DIR/"
-mkdir -p "$TMP_DIR/prometheus"
-sed \
-  -e "s/{{LLM_IP}}/${LLM_IP:-10.10.10.50}/g" \
-  -e "s/{{MONITORING_IP}}/${MONITORING_IP:-10.10.10.60}/g" \
-  "${PROJECT_ROOT}/monitoring/prometheus/prometheus.yml.tpl" > "$TMP_DIR/prometheus/prometheus.yml"
+mark_step "Deploying monitoring stack to ${TARGET}"
 
-info "Deploying monitoring stack to ${TARGET}"
 wait_for_ssh "$TARGET" 240
-guest_ssh "$TARGET" "sudo mkdir -p ${REMOTE_STACK} && sudo chown ${GUEST_USER:-ubuntu}:${GUEST_USER:-ubuntu} ${REMOTE_STACK}"
-scp ${SSH_OPTS:-} -r "$TMP_DIR/." "${GUEST_USER:-ubuntu}@${TARGET}:${REMOTE_STACK}/"
-guest_ssh "$TARGET" "sudo mkdir -p /mnt/monitoring-data/prometheus /mnt/monitoring-data/grafana && cd ${REMOTE_STACK} && sudo docker compose up -d"
-info "Monitoring stack deployed at http://${TARGET}:3000 and http://${TARGET}:9090"
+
+render_prometheus_config() {
+  info "Rendering Prometheus config for LLM target ${LLM_IP:-10.10.10.50} and Monitoring target ${MONITORING_IP:-10.10.10.60}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' EXIT
+  cp -R "${PROJECT_ROOT}/docker/monitoring/." "$tmp_dir/"
+  mkdir -p "$tmp_dir/prometheus"
+  sed \
+    -e "s/{{LLM_IP}}/${LLM_IP:-10.10.10.50}/g" \
+    -e "s/{{MONITORING_IP}}/${MONITORING_IP:-10.10.10.60}/g" \
+    "${PROJECT_ROOT}/monitoring/prometheus/prometheus.yml.tpl" > "$tmp_dir/prometheus/prometheus.yml"
+  echo "$tmp_dir"
+}
+
+setup_remote_directory() {
+  guest_ssh "$TARGET" "sudo mkdir -p ${REMOTE_STACK} && sudo chown ${GUEST_USER}:${GUEST_USER} ${REMOTE_STACK}"
+}
+
+transfer_stack() {
+  info "Transferring docker compose stack"
+  local tmp_dir="$1"
+  SCP_OPTS="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
+  scp ${SCP_OPTS} -r "$tmp_dir/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
+}
+
+check_existing_containers() {
+  local existing
+  existing="$(guest_ssh "$TARGET" "cd ${REMOTE_STACK} && docker compose ps -q")"
+  if [[ -n "$existing" ]]; then
+    info "Existing containers found, will be updated"
+    return 0
+  fi
+  return 1
+}
+
+validate_prometheus_config() {
+  info "Validating Prometheus configuration"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+set -Eeuo pipefail
+cd /opt/monitoring-stack
+if docker compose ps -q | grep -q prometheus; then
+  echo "Testing Prometheus config..."
+  sudo docker compose exec -T prometheus promtool check config /etc/prometheus/prometheus.yml || {
+    echo "Prometheus config is invalid"
+    exit 1
+  }
+  echo "Prometheus config is valid"
+else
+  echo "Prometheus not running yet, skipping validation"
+fi
+EOF
+}
+
+deploy_stack() {
+  info "Deploying with Docker Compose"
+  guest_ssh "$TARGET" "cd ${REMOTE_STACK} && sudo docker compose up -d --remove-orphans"
+}
+
+verify_deployment() {
+  info "Verifying monitoring stack deployment"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+set -Eeuo pipefail
+cd /opt/monitoring-stack
+
+echo "Container status:"
+sudo docker compose ps
+
+echo ""
+echo "Checking for running containers..."
+RUNNING=$(sudo docker compose ps --services --filter "status=running" | wc -l)
+if [[ $RUNNING -eq 0 ]]; then
+  echo "No containers are running!"
+  exit 1
+fi
+
+echo "Verifying Prometheus status..."
+timeout 10 curl -f http://localhost:9090/-/healthy || {
+  echo "Prometheus is not healthy"
+  exit 1
+}
+
+echo "Verifying Grafana status..."
+timeout 10 curl -f http://localhost:3000/login || {
+  echo "Grafana is not responding"
+  exit 1
+}
+
+echo "Monitoring stack responsive"
+EOF
+}
+
+print_access_info() {
+  info "Monitoring stack deployed:"
+  info "  - Prometheus: http://${TARGET}:9090"
+  info "  - Grafana: http://${TARGET}:3000"
+}
+
+TMP_DIR=$(render_prometheus_config)
+setup_remote_directory
+check_existing_containers || info "No existing containers, performing initial deployment"
+transfer_stack "$TMP_DIR"
+validate_prometheus_config
+deploy_stack
+verify_deployment
+print_access_info
+
+audit_log "Monitoring stack deployed to ${TARGET}"

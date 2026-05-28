@@ -1,0 +1,59 @@
+# Infrastructure Configuration for llm-lab
+# All VM, network, storage, and GPU parameters defined here
+
+proxmox:
+  host: "77.50.132.85"
+  user: "root"
+  remote_dir: "/root/llm-lab"
+
+storage:
+  template: "SSD-VMs"
+  llm: "SSD-VMs"
+  monitoring: "local-lvm"
+
+template:
+  vmid: 9000
+  storage: "SSD-VMs"
+  ubuntu_image_url: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+  ubuntu_image_path: "/var/lib/vz/template/qcow2/ubuntu-noble.img"
+  prepared_image_path: "/var/lib/vz/template/qcow2/ubuntu-noble-llm-prepared.img"
+  ssh_public_key: "/root/.ssh/id_rsa.pub"
+
+network:
+  wan_bridge: "vmbr0"
+  internal_bridge: "vmbr1"
+  internal_cidr: "10.10.10.1/24"
+  internal_subnet: "10.10.10.0/24"
+  internal_gateway: "10.10.10.1"
+  dns_server: "1.1.1.1"
+
+llm_vm:
+  vmid: 110
+  name: "llm-server"
+  ip: "10.10.10.50"
+  prefix: 24
+  memory_mb: 16384
+  cores: 4
+  system_disk_gb: 40
+  data_disk_gb: 120
+  gpu_pci_addr: ""  # Set to empty for no GPU, or specify e.g. "0000:01:00.0"
+
+monitoring_vm:
+  vmid: 120
+  name: "monitoring-vm"
+  ip: "10.10.10.60"
+  prefix: 24
+  memory_mb: 4096
+  cores: 2
+  system_disk_gb: 40
+  data_disk_gb: 100
+
+guest:
+  user: "ubuntu"
+  ssh_opts: "-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30"
+
+features:
+  gpu_passthrough: false
+  firewall_enabled: true
+  logging_enabled: true
+  audit_enabled: true

@@ -2,143 +2,185 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 require_root
-
-LLM_VMID="${LLM_VMID:-110}"
-LLM_NAME="${LLM_NAME:-llm-server}"
-TEMPLATE_VMID="${TEMPLATE_VMID:-9000}"
-LLM_STORAGE="${LLM_STORAGE:-${STORAGE:-SSD-VMs}}"
-INTERNAL_BRIDGE="${INTERNAL_BRIDGE:-vmbr1}"
-INTERNAL_GATEWAY="${INTERNAL_GATEWAY:-10.10.10.1}"
-DNS_SERVER="${DNS_SERVER:-1.1.1.1}"
-LLM_IP="${LLM_IP:-10.10.10.50}"
-LLM_PREFIX="${LLM_PREFIX:-24}"
-LLM_MEMORY_MB="${LLM_MEMORY_MB:-20480}"
-LLM_CORES="${LLM_CORES:-6}"
-LLM_SYSTEM_DISK_GB="$(normalize_gb "${LLM_SYSTEM_DISK_GB:-64}")"
-LLM_DATA_DISK_GB="$(normalize_gb "${LLM_DATA_DISK_GB:-200}")"
-
 require_cmd qm
+require_cmd sgdisk
+require_cmd blkid
+
+mark_step "Creating/Updating LLM VM (VMID: ${LLM_VMID})"
+
 require_pve_storage "$LLM_STORAGE"
 vm_exists "$TEMPLATE_VMID" || die "Template ${TEMPLATE_VMID} not found"
 
-if vm_exists "$LLM_VMID"; then
-  info "VM ${LLM_VMID} already exists. Updating configuration."
-  WRONG_DISKS="$(qm config "$LLM_VMID" | awk -F'[: ,]+' -v storage="${LLM_STORAGE}" '/^(scsi0|scsi1):/ && $2 !~ "^" storage ":" {print $1 ":" $2}' | paste -sd ' ' -)"
-  if [[ -n "$WRONG_DISKS" ]]; then
-    warn "VM ${LLM_VMID} already has disks outside ${LLM_STORAGE}: ${WRONG_DISKS}"
-    warn "The script will not move existing disks automatically. Recreate the VM or move disks manually with qm move_disk."
-  fi
-else
-  info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
-  qm clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
-fi
-
-qm guest exec "$LLM_VMID" -- bash -lc '
-  set -Eeuo pipefail
-
-  DISK=/dev/sdb
-  PART=/dev/sdb1
-  MOUNT=/mnt/ai-data
-
-  if [[ -b "$DISK" ]]; then
-
-    if ! blkid "$PART" >/dev/null 2>&1; then
-      echo "[INFO] Partitioning data disk"
-
-      sgdisk -o "$DISK"
-      sgdisk -n 1:0:0 -t 1:8300 "$DISK"
-
-      partprobe "$DISK"
-      sleep 2
-
-      mkfs.ext4 -F -L ai-data "$PART"
+ bilg_check_existing_vm() {
+  if vm_exists "$LLM_VMID"; then
+    info "VM ${LLM_VMID} already exists. Checking configuration..."
+    local detected_storage
+    detected_storage="$(qm config "$LLM_VMID" | awk -F'[: ,]+' '/^scsi0:/ {print $2}' | cut -d, -f1 | cut -d: -f1)"
+    if [[ "$detected_storage" != "$LLM_STORAGE" ]]; then
+      warn "VM ${LLM_VMID}: scsi0 on $detected_storage, expected $LLM_STORAGE"
+      if [[ "${FORCE_REBUILD:-0}" != "1" ]]; then
+        warn "Move disk manually with: qm move_disk ${LLM_VMID} scsi0 ${LLM_STORAGE}"
+        die "Storage mismatch. Remove VM or use FORCE_REBUILD=1"
+      else
+        info "FORCE_REBUILD=1: destroying VM ${LLM_VMID}"
+        qm destroy "$LLM_VMID" --purge
+        return 1
+      fi
     fi
-
-    UUID=$(blkid -s UUID -o value "$PART")
-
-    mkdir -p "$MOUNT"
-
-    if ! grep -q "$UUID" /etc/fstab; then
-      echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
-    fi
-
-    mount -a
-
-    mkdir -p \
-      $MOUNT/docker \
-      $MOUNT/ollama \
-      $MOUNT/models
-
-    chown -R ubuntu:ubuntu "$MOUNT"
-
-    echo "[INFO] Data disk mounted to $MOUNT"
+    return 0
   fi
+  return 1
+}
 
-qm set "$LLM_VMID" \
-  --name "$LLM_NAME" \
-  --memory "$LLM_MEMORY_MB" \
-  --cores "$LLM_CORES" \
-  --cpu host \
-  --balloon 0 \
-  --numa 1 \
-  --agent enabled=1 \
-  --net0 "virtio,bridge=${INTERNAL_BRIDGE},queues=8" \
-  --ciuser ubuntu \
-  --ipconfig0 "ip=${LLM_IP}/${LLM_PREFIX},gw=${INTERNAL_GATEWAY}" \
-  --nameserver "$DNS_SERVER"
+clone_vm_if_needed() {
+  if ! bilg_check_existing_vm; then
+    info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
+    qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
+    check_system_running "$LLM_VMID" || die "VM ${LLM_VMID} did not start correctly"
+  fi
+}
 
-if ! qm config "$LLM_VMID" | grep -q '^scsi1:'; then
-  qm set "$LLM_VMID" --scsi1 "${LLM_STORAGE}:${LLM_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
+configure_vm() {
+  qm_command set "$LLM_VMID" \
+    --name "$LLM_NAME" \
+    --memory "$LLM_MEMORY_MB" \
+    --cores "$LLM_CORES" \
+    --cpu host \
+    --balloon 0 \
+    --numa 1 \
+    --agent enabled=1 \
+    --net0 "virtio,bridge=${INTERNAL_BRIDGE},queues=8" \
+    --ciuser "$GUEST_USER" \
+    --ipconfig0 "ip=${LLM_IP}/${LLM_PREFIX},gw=${INTERNAL_GATEWAY}" \
+    --nameserver "$DNS_SERVER"
+}
+
+confirm_data_disk_reformat() {
+  local disk_device="/dev/sdb"
+  local disk_part="${disk_device}1"
+  if qm_command guest exec "$LLM_VMID" -- test -b "$disk_device" >/dev/null 2>&1; then
+    if qm_command guest exec "$LLM_VMID" -- blkid "$disk_part" >/dev/null 2>&1; then
+      warn "Data disk $disk_part already has a filesystem"
+      if [[ "${REFORMAT_DATA_DISK:-0}" != "1" ]]; then
+        info "Skipping reformat. Use REFORMAT_DATA_DISK=1 to force."
+        return 1
+      else
+        local confirm
+        read -p "Confirm reformat data disk? This WILL DESTROY DATA. [yes/no]: " confirm
+        [[ "$confirm" == "yes" ]] || die "Aborted by user"
+        info "Formatting data disk"
+        return 0
+      fi
+    else
+      info "No filesystem on $disk_part, will format"
+      return 0
+    fi
+  else
+    warn "Data disk $disk_device not present in VM"
+    return 1
+  fi
+}
+
+partition_and_mount_data_disk() {
+  qm_command guest exec "$LLM_VMID" -- bash -lc '
+set -Eeuo pipefail
+DISK=/dev/sdb
+PART=/dev/sdb1
+MOUNT=/mnt/llm-data
+if [[ -b "$DISK" ]]; then
+  if ! blkid "$PART" >/dev/null 2>&1; then
+    sgdisk -o "$DISK"
+    sgdisk -n 1:0:0 -t 1:8300 "$DISK"
+    partprobe "$DISK"
+    sleep 2
+    mkfs.ext4 -F -L ai-data "$PART"
+  fi
+  UUID=$(blkid -s UUID -o value "$PART")
+  mkdir -p "$MOUNT"
+  if ! grep -q "$UUID" /etc/fstab; then
+    echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
+  fi
+  mount -a
+  mkdir -p $MOUNT/ollama $MOUNT/models $MOUNT/docker
+  chown -R ${GUEST_USER}:${GUEST_USER} "$MOUNT"
 fi
-
-GPU_ADDR="${GPU_PCI_ADDR:-}"
-if [[ -z "$GPU_ADDR" ]]; then
-  GPU_ADDR="$(lspci -D -d 10de: | awk 'NR==1 {print $1}')"
-fi
-if [[ -n "$GPU_ADDR" ]]; then
-  info "Configuring GPU passthrough: ${GPU_ADDR}"
-  qm set "$LLM_VMID" --hostpci0 "${GPU_ADDR},pcie=1"
-else
-  warn "No NVIDIA GPU detected. LLM VM will run without GPU passthrough."
-fi
-
-if vm_running "$LLM_VMID"; then
-  info "VM ${LLM_VMID} is already running"
-else
-  qm start "$LLM_VMID"
-fi
-
-wait_for_guest_agent "$LLM_VMID" 240
-
-qm guest exec "$LLM_VMID" -- bash -lc '
-  set -e
-  apt-get update -y
-  DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils gdisk parted
-  sgdisk -e /dev/sda || true
-  partprobe /dev/sda || true
-  growpart /dev/sda 1 || true
-  resize2fs /dev/sda1 || true
-  systemctl stop multipathd || true
-  systemctl disable multipathd || true
-  apt-get purge -y multipath-tools || true
-  update-initramfs -u || true
 '
+}
 
-qm guest exec "$LLM_VMID" -- bash -lc '
-  set -e
-  if [[ -b /dev/sdb ]] && ! findmnt -S /dev/sdb1 >/dev/null 2>&1; then
-    if ! blkid /dev/sdb1 >/dev/null 2>&1; then
-      sgdisk -o /dev/sdb
-      sgdisk -n 1:0:0 -t 1:8300 /dev/sdb
-      partprobe /dev/sdb
-      mkfs.ext4 -F /dev/sdb1
-    fi
-    mkdir -p /mnt/llm-data
-    grep -q "/mnt/llm-data" /etc/fstab || echo "/dev/sdb1 /mnt/llm-data ext4 defaults 0 0" >> /etc/fstab
-    mount /mnt/llm-data || true
+setup_gpu_passthrough() {
+  if [[ "$GPU_PASSTHROUGH" != "true" ]]; then
+    info "GPU passthrough disabled in config"
+    return 0
   fi
-'
 
-ssh-keygen -R "$LLM_IP" >/dev/null 2>&1 || true
-ssh-keyscan -H "$LLM_IP" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
-info "LLM VM is ready: ssh ubuntu@${LLM_IP}"
+  if [[ -z "$GPU_PCI_ADDR" ]]; then
+    GPU_PCI_ADDR="$(lspci -D -d 10de: | awk 'NR==1 {print $1}')"
+  fi
+
+  if [[ -z "$GPU_PCI_ADDR" ]]; then
+    warn "No NVIDIA GPU found on host"
+    return 0
+  fi
+
+  validate_pci_device "$GPU_PCI_ADDR" || die "PCI device validation failed"
+  info "Configuring GPU passthrough: ${GPU_PCI_ADDR}"
+  qm_command set "$LLM_VMID" --hostpci0 "${GPU_PCI_ADDR},pcie=1"
+}
+
+setup_data_disk_storage() {
+  if ! qm_command config "$LLM_VMID" | grep -q '^scsi1:'; then
+    qm_command set "$LLM_VMID" --scsi1 "${LLM_STORAGE}:${LLM_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
+  else
+    info "Data disk scsi1 already configured"
+  fi
+}
+
+start_and_wait_vm() {
+  if ! vm_running "$LLM_VMID"; then
+    qm_command start "$LLM_VMID"
+  fi
+  guest_is_ready "$LLM_VMID" 240 || die "VM ${LLM_VMID} not ready"
+  wait_for_cloud_init "$LLM_VMID" 300 || die "cloud-init failed on VM ${LLM_VMID}"
+  check_system_running "$LLM_VMID" || die "System check failed for VM ${LLM_VMID}"
+}
+
+grow_system_disk() {
+  qm_command guest exec "$LLM_VMID" -- bash -lc '
+set -e
+apt-get update -y >/dev/null 2>&1
+DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils gdisk parted >/dev/null 2>&1
+sgdisk -e /dev/sda || true
+partprobe /dev/sda || true
+growpart /dev/sda 1 || true
+resize2fs /dev/sda1 || true
+systemctl stop multipathd || true
+systemctl disable multipathd || true
+apt-get purge -y multipath-tools >/dev/null 2>&1
+update-initramfs -u >/dev/null 2>&1
+'
+}
+
+setup_ssh_access() {
+  ssh-keygen -R "$LLM_IP" >/dev/null 2>&1 || true
+  ssh-keyscan -H "$LLM_IP" >> "${HOME}/.ssh/known_hosts" 2>/dev/null || true
+  info "LLM VM ready: ssh ${GUEST_USER}@${LLM_IP}"
+}
+
+clone_vm_if_needed
+configure_vm
+setup_data_disk_storage
+
+if confirm_data_disk_reformat; then
+  partition_and_mount_data_disk
+fi
+
+setup_gpu_passthrough
+start_and_wait_vm
+grow_system_disk
+
+if confirm_data_disk_reformat; then
+  partition_and_mount_data_disk
+fi
+
+setup_ssh_access
+audit_log "LLM VM ${LLM_VMID} setup completed successfully"
