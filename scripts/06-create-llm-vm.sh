@@ -142,6 +142,11 @@ start_and_wait_vm() {
   fi
   guest_is_ready "$LLM_VMID" 240 || die "VM ${LLM_VMID} not ready"
   wait_for_cloud_init "$LLM_VMID" 300 || die "cloud-init failed on VM ${LLM_VMID}"
+  # Ensure the guest has configured its network IP before proceeding
+  if ! check_guest_network "$LLM_VMID" "$LLM_IP" 120; then
+    die "Guest network not configured on VM ${LLM_VMID} (expected IP: ${LLM_IP})"
+  fi
+
   check_system_running "$LLM_VMID" || die "System check failed for VM ${LLM_VMID}"
 }
 

@@ -223,8 +223,12 @@ check_system_running() {
   state="${state//$'\r'/}"
   state="${state//$'\n'/}"
   case "$state" in
-    running.*)
+    running* )
       info "System is running on VM ${vmid}: ${state}"
+      return 0
+      ;;
+    degraded|starting|starting* )
+      warn "System state on VM ${vmid}: ${state} (continuing)"
       return 0
       ;;
     *)
@@ -232,6 +236,38 @@ check_system_running() {
       return 1
       ;;
   esac
+}
+
+check_guest_network() {
+  local vmid="$1"
+  local expected_ip="$2"
+  local timeout="${3:-120}"
+  local waited=0
+  info "Verifying guest network IP ${expected_ip} on VM ${vmid}"
+  while :; do
+    local result
+    result="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || {
+      sleep 3
+      ((waited+=3))
+      if ((waited>=timeout)); then
+        warn "Guest ${vmid} network check failed to run 'ip' inside guest"
+        return 1
+      fi
+      continue
+    }
+    local out
+    out="$(parse_qm_guest_exec_output "$result")"
+    if printf '%s' "$out" | grep -q -- "$expected_ip"; then
+      info "Guest ${vmid} has IP ${expected_ip}"
+      return 0
+    fi
+    sleep 3
+    ((waited+=3))
+    if ((waited>=timeout)); then
+      warn "Guest ${vmid} missing IP ${expected_ip} after ${timeout}s"
+      return 1
+    fi
+  done
 }
 
 validate_pci_device() {
