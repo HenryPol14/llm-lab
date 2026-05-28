@@ -72,6 +72,12 @@ test_config_validity() {
   return 0
 }
 
+test_config_regression() {
+  require_cmd bash
+  require_cmd yq
+  "${SCRIPT_DIR}/test-config-regressions.sh"
+}
+
 test_proxmox_storage() {
   for storage in "$TEMPLATE_STORAGE" "$LLM_STORAGE" "$MONITORING_STORAGE"; do
     require_pve_storage "$storage" || return 1
@@ -178,6 +184,7 @@ case "$TEST_MODE" in
     run_test "Script syntax" test_script_syntax
     run_test "Common library" test_common_library
     run_test "Config validity" test_config_validity
+    run_test "Config regression" test_config_regression
     run_test "Proxmox storage" test_proxmox_storage
     run_test "Network bridge" test_network_bridge
     ;;
@@ -185,6 +192,7 @@ case "$TEST_MODE" in
     run_test "Script syntax" test_script_syntax
     run_test "Common library" test_common_library
     run_test "Config validity" test_config_validity
+    run_test "Config regression" test_config_regression
     run_test "Proxmox storage" test_proxmox_storage
     run_test "Template exists" test_template_exists
     run_test "Network bridge" test_network_bridge

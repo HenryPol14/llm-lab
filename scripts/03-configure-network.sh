@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+NFTABLES_DIR="${NFTABLES_DIR:-/etc/nftables.d}"
+NFTABLES_CONF="${NFTABLES_CONF:-/etc/nftables.conf}"
+
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 require_root
@@ -51,59 +54,19 @@ create_firewall_whitelist() {
   fi
 
   info "Creating firewall whitelist rules"
-  mkdir -p /etc/nftables.d
+  mkdir -p "$NFTABLES_DIR"
 
-  cat >/etc/nftables.d/llm-lab.nft <<EOF
-table inet llm_lab {
-  chain postrouting {
-    type nat hook postrouting priority srcnat; policy accept;
-    
-    # Allow only specific services to internet
-    ip saddr ${LLM_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
-    ip saddr ${LLM_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
-    
-    ip saddr ${MONITORING_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
-    ip saddr ${MONITORING_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
-    
-    # Deny all other outbound
-    ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" drop
-  }
+  nftables_whitelist_config >"$NFTABLES_DIR/llm-lab.nft"
 
-  chain forward {
-    type filter hook forward priority 0; policy drop;
-    
-    # LLM VM services - inbound
-    ip daddr ${LLM_IP} tcp dport { 3000, 11434 } accept
-    
-    # Monitoring VM services - inbound
-    ip daddr ${MONITORING_IP} tcp dport { 3000, 9090 } accept
-    
-    # Allow established connections
-    ct state established,related accept
-    
-    # Drop inter-VM communication
-    ip saddr ${INTERNAL_SUBNET} ip daddr ${INTERNAL_SUBNET} drop
-  }
-
-  chain input {
-    type filter hook input priority 0; policy accept;
-  }
-
-  chain output {
-    type filter hook output priority 0; policy accept;
-  }
-}
-EOF
-
-  if ! grep -q 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf; then
-    printf '\ninclude "/etc/nftables.d/*.nft"\n' >> /etc/nftables.conf
+  if ! grep -q "include \"$NFTABLES_DIR/*.nft\"" "$NFTABLES_CONF"; then
+    printf '\ninclude "%s/*.nft"\n' "$NFTABLES_DIR" >> "$NFTABLES_CONF"
   fi
 }
 
 apply_firewall() {
   info "Applying firewall rules"
   systemctl enable --now nftables
-  nft -f /etc/nftables.conf
+  nft -f "$NFTABLES_CONF"
 
   info "Current nftables rules:"
   nft list ruleset

@@ -44,6 +44,82 @@ require_yq() {
   require_cmd yq || die "yq is required for YAML config parsing. Install: https://github.com/mikefarah/yq"
 }
 
+yaml_get() {
+  local query="$1"
+  local value
+  value="$(yq -r "$query" "$CONFIG_YAML")"
+  if [[ "$value" == "null" ]]; then
+    value=""
+  fi
+  printf '%s' "$value"
+}
+
+validate_network_variable() {
+  local name="$1"
+  local value="$2"
+
+  [[ -n "$value" ]] || die "Network config value $name is required and must not be empty"
+  [[ "$value" != *"\""* ]] || die "Invalid quoted value loaded for $name: $value"
+}
+
+validate_network_config() {
+  validate_network_variable INTERNAL_BRIDGE "$INTERNAL_BRIDGE"
+  validate_network_variable WAN_BRIDGE "$WAN_BRIDGE"
+  validate_network_variable INTERNAL_CIDR "$INTERNAL_CIDR"
+  validate_network_variable INTERNAL_SUBNET "$INTERNAL_SUBNET"
+  validate_network_variable INTERNAL_GATEWAY "$INTERNAL_GATEWAY"
+
+  [[ "$INTERNAL_BRIDGE" =~ ^[a-zA-Z0-9._-]+$ ]] || die "Invalid bridge name: $INTERNAL_BRIDGE"
+  [[ "$WAN_BRIDGE" =~ ^[a-zA-Z0-9._-]+$ ]] || die "Invalid bridge name: $WAN_BRIDGE"
+  [[ "$INTERNAL_SUBNET" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] || die "Invalid subnet format: $INTERNAL_SUBNET"
+  [[ "$INTERNAL_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] || die "Invalid CIDR format: $INTERNAL_CIDR"
+  [[ "$INTERNAL_GATEWAY" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "Invalid gateway address: $INTERNAL_GATEWAY"
+}
+
+nftables_whitelist_config() {
+  cat <<EOF
+table inet llm_lab {
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+
+    # Allow only specific services to internet
+    ip saddr ${LLM_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
+    ip saddr ${LLM_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
+
+    ip saddr ${MONITORING_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
+    ip saddr ${MONITORING_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
+
+    # Deny all other outbound
+    ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" drop
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+
+    # LLM VM services - inbound
+    ip daddr ${LLM_IP} tcp dport { 3000, 11434 } accept
+
+    # Monitoring VM services - inbound
+    ip daddr ${MONITORING_IP} tcp dport { 3000, 9090 } accept
+
+    # Allow established connections
+    ct state established,related accept
+
+    # Drop inter-VM communication
+    ip saddr ${INTERNAL_SUBNET} ip daddr ${INTERNAL_SUBNET} drop
+  }
+
+  chain input {
+    type filter hook input priority 0; policy accept;
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+  }
+}
+EOF
+}
+
 mark_step() {
   audit_log "STEP_START: $*"
   info "━━━ $* ━━━"
@@ -166,35 +242,36 @@ load_yaml_config() {
   require_yq
   if [[ -f "$CONFIG_YAML" ]]; then
     info "Loading YAML config from $CONFIG_YAML"
-    export LLM_VMID="$(yq '.llm_vm.vmid' "$CONFIG_YAML")"
-    export LLM_IP="$(yq '.llm_vm.ip' "$CONFIG_YAML")"
-    export LLM_MEMORY_MB="$(yq '.llm_vm.memory_mb' "$CONFIG_YAML")"
-    export LLM_CORES="$(yq '.llm_vm.cores' "$CONFIG_YAML")"
-    export LLM_SYSTEM_DISK_GB="$(normalize_gb "$(yq '.llm_vm.system_disk_gb' "$CONFIG_YAML")")"
-    export LLM_DATA_DISK_GB="$(normalize_gb "$(yq '.llm_vm.data_disk_gb' "$CONFIG_YAML")")"
-    export MONITORING_VMID="$(yq '.monitoring_vm.vmid' "$CONFIG_YAML")"
-    export MONITORING_IP="$(yq '.monitoring_vm.ip' "$CONFIG_YAML")"
-    export MONITORING_MEMORY_MB="$(yq '.monitoring_vm.memory_mb' "$CONFIG_YAML")"
-    export MONITORING_CORES="$(yq '.monitoring_vm.cores' "$CONFIG_YAML")"
-    export MONITORING_SYSTEM_DISK_GB="$(normalize_gb "$(yq '.monitoring_vm.system_disk_gb' "$CONFIG_YAML")")"
-    export MONITORING_DATA_DISK_GB="$(normalize_gb "$(yq '.monitoring_vm.data_disk_gb' "$CONFIG_YAML")")"
-    export INTERNAL_BRIDGE="$(yq '.network.internal_bridge' "$CONFIG_YAML")"
-    export INTERNAL_GATEWAY="$(yq '.network.internal_gateway' "$CONFIG_YAML")"
-    export DNS_SERVER="$(yq '.network.dns_server' "$CONFIG_YAML")"
-    export INTERNAL_CIDR="$(yq '.network.internal_cidr' "$CONFIG_YAML")"
-    export INTERNAL_SUBNET="$(yq '.network.internal_subnet' "$CONFIG_YAML")"
-    export WAN_BRIDGE="$(yq '.network.wan_bridge' "$CONFIG_YAML")"
-    export TEMPLATE_VMID="$(yq '.template.vmid' "$CONFIG_YAML")"
-    export TEMPLATE_STORAGE="$(yq '.template.storage' "$CONFIG_YAML")"
-    export LLM_STORAGE="$(yq '.storage.llm' "$CONFIG_YAML")"
-    export MONITORING_STORAGE="$(yq '.storage.monitoring' "$CONFIG_YAML")"
-    export GUEST_USER="$(yq '.guest.user' "$CONFIG_YAML")"
-    export SSH_OPTS="$(yq '.guest.ssh_opts' "$CONFIG_YAML")"
-    export GPU_PCI_ADDR="$(yq '.llm_vm.gpu_pci_addr' "$CONFIG_YAML")"
-    export GPU_PASSTHROUGH="$(yq '.features.gpu_passthrough' "$CONFIG_YAML")"
-    export FIREWALL_ENABLED="$(yq '.features.firewall_enabled' "$CONFIG_YAML")"
-    export LOGGING_ENABLED="$(yq '.features.logging_enabled' "$CONFIG_YAML")"
-    export AUDIT_ENABLED="$(yq '.features.audit_enabled' "$CONFIG_YAML")"
+    export LLM_VMID="$(yaml_get '.llm_vm.vmid')"
+    export LLM_IP="$(yaml_get '.llm_vm.ip')"
+    export LLM_MEMORY_MB="$(yaml_get '.llm_vm.memory_mb')"
+    export LLM_CORES="$(yaml_get '.llm_vm.cores')"
+    export LLM_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.system_disk_gb')")"
+    export LLM_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.data_disk_gb')")"
+    export MONITORING_VMID="$(yaml_get '.monitoring_vm.vmid')"
+    export MONITORING_IP="$(yaml_get '.monitoring_vm.ip')"
+    export MONITORING_MEMORY_MB="$(yaml_get '.monitoring_vm.memory_mb')"
+    export MONITORING_CORES="$(yaml_get '.monitoring_vm.cores')"
+    export MONITORING_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.system_disk_gb')")"
+    export MONITORING_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.data_disk_gb')")"
+    export INTERNAL_BRIDGE="$(yaml_get '.network.internal_bridge')"
+    export INTERNAL_GATEWAY="$(yaml_get '.network.internal_gateway')"
+    export DNS_SERVER="$(yaml_get '.network.dns_server')"
+    export INTERNAL_CIDR="$(yaml_get '.network.internal_cidr')"
+    export INTERNAL_SUBNET="$(yaml_get '.network.internal_subnet')"
+    export WAN_BRIDGE="$(yaml_get '.network.wan_bridge')"
+    export TEMPLATE_VMID="$(yaml_get '.template.vmid')"
+    export TEMPLATE_STORAGE="$(yaml_get '.template.storage')"
+    export LLM_STORAGE="$(yaml_get '.storage.llm')"
+    export MONITORING_STORAGE="$(yaml_get '.storage.monitoring')"
+    export GUEST_USER="$(yaml_get '.guest.user')"
+    export SSH_OPTS="$(yaml_get '.guest.ssh_opts')"
+    export GPU_PCI_ADDR="$(yaml_get '.llm_vm.gpu_pci_addr')"
+    export GPU_PASSTHROUGH="$(yaml_get '.features.gpu_passthrough')"
+    export FIREWALL_ENABLED="$(yaml_get '.features.firewall_enabled')"
+    export LOGGING_ENABLED="$(yaml_get '.features.logging_enabled')"
+    export AUDIT_ENABLED="$(yaml_get '.features.audit_enabled')"
+    validate_network_config
     audit_log "Loaded YAML config"
   else
     warn "YAML config not found: $CONFIG_YAML. Falling back to environment variables."
