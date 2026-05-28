@@ -195,13 +195,33 @@ wait_for_cloud_init() {
   done
 }
 
+parse_qm_guest_exec_output() {
+  local raw="$1"
+  if [[ "$raw" == *'"out-data"'* ]]; then
+    local parsed
+    parsed="$(printf '%s
+' "$raw" | grep '"out-data"' | sed -e 's/^[[:space:]]*"out-data"[[:space:]]*:[[:space:]]*"//' -e 's/"$//')"
+    if [[ -n "$parsed" ]]; then
+      parsed="${parsed%\\n}"
+      parsed="${parsed//\\n/ }"
+      printf '%s' "$parsed"
+      return
+    fi
+  fi
+  printf '%s' "$raw"
+}
+
 check_system_running() {
   local vmid="$1"
+  local result
   local state
-  state="$(qm guest exec "$vmid" -- systemctl is-system-running 2>/dev/null)" || {
+  result="$(qm guest exec "$vmid" -- systemctl is-system-running 2>/dev/null)" || {
     warn "System running check failed on VM ${vmid}"
     return 1
   }
+  state="$(parse_qm_guest_exec_output "$result")"
+  state="${state//$'\r'/}"
+  state="${state//$'\n'/}"
   case "$state" in
     running.*)
       info "System is running on VM ${vmid}: ${state}"
