@@ -11,7 +11,7 @@ mark_step "Creating/Updating LLM VM (VMID: ${LLM_VMID})"
 require_pve_storage "$LLM_STORAGE"
 vm_exists "$TEMPLATE_VMID" || die "Template ${TEMPLATE_VMID} not found"
 
- bilg_check_existing_vm() {
+bilg_check_existing_vm() {
   if vm_exists "$LLM_VMID"; then
     info "VM ${LLM_VMID} already exists. Checking configuration..."
     local detected_storage
@@ -36,8 +36,6 @@ clone_vm_if_needed() {
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
     qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
-    # The VM is not guaranteed to be running immediately after clone.
-    # Actual startup and guest readiness are handled later in start_and_wait_vm().
   fi
 }
 
@@ -54,11 +52,86 @@ configure_vm() {
     --ciuser "$GUEST_USER" \
     --ipconfig0 "ip=${LLM_IP}/${LLM_PREFIX},gw=${INTERNAL_GATEWAY}" \
     --nameserver "$DNS_SERVER"
+
+  # [ИСПРАВЛЕНИЕ] Добавляем размер к системному диску на уровне Proxmox, 
+  # чтобы внутри ВМ команде growpart было куда расширяться.
+  # Например, расширяем scsi0 до 30 ГБ (измените под свои нужды, если нужно больше)
+  info "Resizing system disk scsi0 on host to 30G..."
+  qm resize "$LLM_VMID" scsi0 30G
+}
+
+setup_data_disk_storage() {
+  if ! qm_command config "$LLM_VMID" | grep -q '^scsi1:'; then
+    qm_command set "$LLM_VMID" --scsi1 "${LLM_STORAGE}:${LLM_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
+  else
+    info "Data disk scsi1 already configured"
+  fi
+}
+
+setup_gpu_passthrough() {
+  if [[ "$GPU_PASSTHROUGH" != "true" ]]; then
+    info "GPU passthrough disabled in config"
+    return 0
+  fi
+
+  if [[ -z "$GPU_PCI_ADDR" ]]; then
+    GPU_PCI_ADDR="$(lspci -D -d 10de: | awk 'NR==1 {print $1}')"
+  fi
+
+  if [[ -z "$GPU_PCI_ADDR" ]]; then
+    warn "No NVIDIA GPU found on host"
+    return 0
+  fi
+
+  validate_pci_device "$GPU_PCI_ADDR" || die "PCI device validation failed"
+  info "Configuring GPU passthrough: ${GPU_PCI_ADDR}"
+  qm_command set "$LLM_VMID" --hostpci0 "${GPU_PCI_ADDR},pcie=1"
+}
+
+start_and_wait_vm() {
+  if ! vm_running "$LLM_VMID"; then
+    qm_command start "$LLM_VMID"
+  fi
+  
+  info "Waiting for Guest Agent to become ready..."
+  guest_is_ready "$LLM_VMID" 240 || die "VM ${LLM_VMID} not ready (Agent timeout)"
+  
+  info "Waiting for cloud-init to complete..."
+  wait_for_cloud_init "$LLM_VMID" 300 || die "cloud-init failed on VM ${LLM_VMID}"
+  
+  if ! check_guest_network "$LLM_VMID" "$LLM_IP" 120; then
+    die "Guest network not configured on VM ${LLM_VMID} (expected IP: ${LLM_IP})"
+  fi
+
+  check_system_running "$LLM_VMID" || die "System check failed for VM ${LLM_VMID}"
+}
+
+grow_system_disk() {
+  info "Growing system disk inside the guest..."
+  # [ИСПРАВЛЕНИЕ] Переменная $GUEST_USER используется внутри сингл-квот ', 
+  # поэтому экранируем её: '"$GUEST_USER"' чтобы Bash хоста передал её значение.
+  qm_command guest exec "$LLM_VMID" -- bash -lc '
+set -e
+# Фиксим возможные проблемы нехватки места перед apt
+apt-get clean
+apt-get update -y >/dev/null 2>&1
+DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils gdisk parted >/dev/null 2>&1
+sgdisk -e /dev/sda || true
+partprobe /dev/sda || true
+growpart /dev/sda 1 || true
+resize2fs /dev/sda1 || true
+systemctl stop multipathd || true
+systemctl disable multipathd || true
+apt-get purge -y multipath-tools >/dev/null 2>&1
+update-initramfs -u >/dev/null 2>&1
+'
 }
 
 confirm_data_disk_reformat() {
   local disk_device="/dev/sdb"
   local disk_part="${disk_device}1"
+  
+  # Теперь это сработает, так как ВМ уже запущена
   if qm_command guest exec "$LLM_VMID" -- test -b "$disk_device" >/dev/null 2>&1; then
     if qm_command guest exec "$LLM_VMID" -- blkid "$disk_part" >/dev/null 2>&1; then
       warn "Data disk $disk_part already has a filesystem"
@@ -83,11 +156,15 @@ confirm_data_disk_reformat() {
 }
 
 partition_and_mount_data_disk() {
+  info "Partitioning and mounting data disk (/dev/sdb)..."
+  # [ИСПРАВЛЕНИЕ] Прокидываем переменную GUEST_USER внутрь окружения ВМ
   qm_command guest exec "$LLM_VMID" -- bash -lc '
 set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
 MOUNT=/mnt/llm-data
+GUEST_USER="'"$GUEST_USER"'"
+
 if [[ -b "$DISK" ]]; then
   if ! blkid "$PART" >/dev/null 2>&1; then
     sgdisk -o "$DISK"
@@ -98,71 +175,13 @@ if [[ -b "$DISK" ]]; then
   fi
   UUID=$(blkid -s UUID -o value "$PART")
   mkdir -p "$MOUNT"
-  if ! grep -q "$UUID" /etc/fstab; then
+  if ! grep -q "$UUID" /etc/etc/fstab 2>/dev/null && ! grep -q "$UUID" /etc/fstab; then
     echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
   fi
   mount -a
-  mkdir -p $MOUNT/ollama $MOUNT/models $MOUNT/docker
-  chown -R ${GUEST_USER}:${GUEST_USER} "$MOUNT"
+  mkdir -p "$MOUNT/ollama" "$MOUNT/models" "$MOUNT/docker"
+  chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
 fi
-'
-}
-
-setup_gpu_passthrough() {
-  if [[ "$GPU_PASSTHROUGH" != "true" ]]; then
-    info "GPU passthrough disabled in config"
-    return 0
-  fi
-
-  if [[ -z "$GPU_PCI_ADDR" ]]; then
-    GPU_PCI_ADDR="$(lspci -D -d 10de: | awk 'NR==1 {print $1}')"
-  fi
-
-  if [[ -z "$GPU_PCI_ADDR" ]]; then
-    warn "No NVIDIA GPU found on host"
-    return 0
-  fi
-
-  validate_pci_device "$GPU_PCI_ADDR" || die "PCI device validation failed"
-  info "Configuring GPU passthrough: ${GPU_PCI_ADDR}"
-  qm_command set "$LLM_VMID" --hostpci0 "${GPU_PCI_ADDR},pcie=1"
-}
-
-setup_data_disk_storage() {
-  if ! qm_command config "$LLM_VMID" | grep -q '^scsi1:'; then
-    qm_command set "$LLM_VMID" --scsi1 "${LLM_STORAGE}:${LLM_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
-  else
-    info "Data disk scsi1 already configured"
-  fi
-}
-
-start_and_wait_vm() {
-  if ! vm_running "$LLM_VMID"; then
-    qm_command start "$LLM_VMID"
-  fi
-  guest_is_ready "$LLM_VMID" 240 || die "VM ${LLM_VMID} not ready"
-  wait_for_cloud_init "$LLM_VMID" 300 || die "cloud-init failed on VM ${LLM_VMID}"
-  # Ensure the guest has configured its network IP before proceeding
-  if ! check_guest_network "$LLM_VMID" "$LLM_IP" 120; then
-    die "Guest network not configured on VM ${LLM_VMID} (expected IP: ${LLM_IP})"
-  fi
-
-  check_system_running "$LLM_VMID" || die "System check failed for VM ${LLM_VMID}"
-}
-
-grow_system_disk() {
-  qm_command guest exec "$LLM_VMID" -- bash -lc '
-set -e
-apt-get update -y >/dev/null 2>&1
-DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils gdisk parted >/dev/null 2>&1
-sgdisk -e /dev/sda || true
-partprobe /dev/sda || true
-growpart /dev/sda 1 || true
-resize2fs /dev/sda1 || true
-systemctl stop multipathd || true
-systemctl disable multipathd || true
-apt-get purge -y multipath-tools >/dev/null 2>&1
-update-initramfs -u >/dev/null 2>&1
 '
 }
 
@@ -172,18 +191,22 @@ setup_ssh_access() {
   info "LLM VM ready: ssh ${GUEST_USER}@${LLM_IP}"
 }
 
+# ==========================================
+# ОСНОВНОЙ ПОРЯДОК ВЫПОЛНЕНИЯ (PIPELINE)
+# ==========================================
+
 clone_vm_if_needed
 configure_vm
 setup_data_disk_storage
-
-if confirm_data_disk_reformat; then
-  partition_and_mount_data_disk
-fi
-
 setup_gpu_passthrough
+
+# 1. Сначала запускаем ВМ и ждем, пока она поднимется
 start_and_wait_vm
+
+# 2. Сразу расширяем системный диск, чтобы ОС не задохнулась
 grow_system_disk
 
+# 3. И только теперь работаем с диском данных (теперь гостевой агент ответит)
 if confirm_data_disk_reformat; then
   partition_and_mount_data_disk
 fi

@@ -64,5 +64,25 @@ qm set "$TEMPLATE_VMID" --boot order=scsi0
 qm set "$TEMPLATE_VMID" --serial0 socket --vga serial0
 qm set "$TEMPLATE_VMID" --ciuser ubuntu --sshkey "$SSH_PUBLIC_KEY" --ipconfig0 ip=dhcp
 
+# Ensure template system disk is at least 30G before converting to template
+info "Checking template disk size"
+current_size_token="$(qm config "$TEMPLATE_VMID" | awk -F'[:, ]+' '/^scsi0:/ { for(i=2;i<=NF;i++) if($i ~ /^size=/) print $i }')"
+if [[ -n "$current_size_token" ]]; then
+  current_gb="$(printf '%s' "$current_size_token" | sed -n 's/.*size=\([0-9]\+\)G.*/\1/p')"
+  if [[ -n "$current_gb" ]]; then
+    if (( current_gb < 30 )); then
+      info "Resizing template disk from ${current_gb}G to 30G"
+      qm resize "$TEMPLATE_VMID" scsi0 30G || warn "Failed to set disk size to 30G"
+    else
+      info "Template disk already ${current_gb}G; skipping resize"
+    fi
+  else
+    warn "Could not parse current disk size token: ${current_size_token}; skipping resize"
+  fi
+else
+  warn "Current scsi0 size token not found in qm config; attempting resize and ignoring failure"
+  qm resize "$TEMPLATE_VMID" scsi0 30G || warn "Resize attempt failed; continue"
+fi
+
 qm template "$TEMPLATE_VMID"
 info "Template ${TEMPLATE_VMID} is ready"
