@@ -18,16 +18,10 @@ REMOTE_MODELS_ROOT="/mnt/ai-data/models"
 install_docker_packages() {
   guest_ssh "$TARGET" 'bash -s' <<'EOF'
 set -Eeuo pipefail
-sudo apt-get update -y >/dev/null 2>&1
+# Base packages (ca-certificates, curl, gnupg, lsb-release, docker.io, jq, htop) are pre-installed in template.
+# Ensure correct docker-compose variant is available.
 
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  ca-certificates \
-  curl \
-  gnupg \
-  lsb-release \
-  docker.io \
-  jq \
-  htop
+sudo apt-get update -y >/dev/null 2>&1
 
 if ! docker compose version >/dev/null 2>&1; then
   if apt-cache show docker-compose-plugin >/dev/null 2>&1; then
@@ -39,7 +33,7 @@ if ! docker compose version >/dev/null 2>&1; then
   fi
 fi
 
-echo "Packages installed successfully"
+echo "Docker compose variant verified"
 EOF
 }
 

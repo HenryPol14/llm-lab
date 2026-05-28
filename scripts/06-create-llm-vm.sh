@@ -36,6 +36,9 @@ clone_vm_if_needed() {
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
     qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
+    
+    info "Ensuring LLM VM system disk is ${LLM_SYSTEM_DISK_GB}GB"
+    qm_command resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${LLM_SYSTEM_DISK_GB}GB"
   fi
 }
 
@@ -108,22 +111,17 @@ start_and_wait_vm() {
 
 grow_system_disk() {
   info "Growing system disk inside the guest..."
-  # [ИСПРАВЛЕНИЕ] Переменная $GUEST_USER используется внутри сингл-квот ', 
-  # поэтому экранируем её: '"$GUEST_USER"' чтобы Bash хоста передал её значение.
   qm_command guest exec "$LLM_VMID" -- bash -lc '
 set -e
-# Фиксим возможные проблемы нехватки места перед apt
 apt-get clean
-apt-get update -y >/dev/null 2>&1
-DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils gdisk parted >/dev/null 2>&1
 sgdisk -e /dev/sda || true
 partprobe /dev/sda || true
 growpart /dev/sda 1 || true
 resize2fs /dev/sda1 || true
 systemctl stop multipathd || true
 systemctl disable multipathd || true
-apt-get purge -y multipath-tools >/dev/null 2>&1
-update-initramfs -u >/dev/null 2>&1
+apt-get purge -y multipath-tools >/dev/null 2>&1 || true
+update-initramfs -u >/dev/null 2>&1 || true
 '
 }
 

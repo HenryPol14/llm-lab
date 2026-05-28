@@ -26,9 +26,8 @@ install_nvidia_drivers() {
   info "Installing NVIDIA drivers"
   guest_ssh "$TARGET" 'bash -s' <<'EOF'
 set -Eeuo pipefail
-sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
 if ! command -v nvidia-smi >/dev/null 2>&1; then
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common >/dev/null 2>&1
+  # ubuntu-drivers-common is already installed in template
   sudo ubuntu-drivers install || true
   sleep 5
   nvidia-smi || true

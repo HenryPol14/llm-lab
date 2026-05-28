@@ -31,7 +31,7 @@ if [[ ! -f "$PREPARED_IMAGE_PATH" || "${FORCE_REBUILD:-0}" == "1" ]]; then
   info "Preparing cloud image with guest packages: ${PREPARED_IMAGE_PATH}"
   cp "$UBUNTU_IMAGE_PATH" "$PREPARED_IMAGE_PATH"
   virt-customize -a "$PREPARED_IMAGE_PATH" \
-    --install qemu-guest-agent,cloud-init,docker.io,htop,curl,git,jq,nvtop,pciutils,cloud-guest-utils,gdisk,parted,ca-certificates,gnupg,lsb-release \
+    --install qemu-guest-agent,cloud-init,docker.io,htop,curl,git,jq,nvtop,pciutils,cloud-guest-utils,gdisk,parted,ca-certificates,gnupg,lsb-release,ubuntu-drivers-common,docker-compose,rsync \
     --run-command 'systemctl enable qemu-guest-agent' \
     --run-command 'systemctl enable docker' \
     --run-command 'mkdir -p /etc/sysctl.d' \

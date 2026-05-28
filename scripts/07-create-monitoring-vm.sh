@@ -36,7 +36,9 @@ clone_vm_if_needed() {
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${MONITORING_VMID} on ${MONITORING_STORAGE}"
     qm_command clone "$TEMPLATE_VMID" "$MONITORING_VMID" --name "$MONITORING_NAME" --full true --storage "$MONITORING_STORAGE"
-    check_system_running "$MONITORING_VMID" || die "VM ${MONITORING_VMID} did not start correctly"
+    
+    info "Ensuring Monitoring VM system disk is ${MONITORING_SYSTEM_DISK_GB}GB"
+    qm_command resize "$MONITORING_VMID" scsi0 "${MONITORING_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${MONITORING_SYSTEM_DISK_GB}GB"
   fi
 }
 
@@ -120,10 +122,9 @@ start_and_wait_vm() {
 }
 
 grow_system_disk() {
-  qm_command resize "$MONITORING_VMID" scsi0 "${MONITORING_SYSTEM_DISK_GB}G" || true
   qm_command guest exec "$MONITORING_VMID" -- bash -lc '
 set -e
-DEBIAN_FRONTEND=noninteractive apt-get install -y cloud-guest-utils gdisk parted >/dev/null 2>&1
+apt-get clean
 sgdisk -e /dev/sda || true
 partprobe /dev/sda || true
 growpart /dev/sda 1 || true
