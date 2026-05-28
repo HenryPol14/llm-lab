@@ -36,7 +36,8 @@ clone_vm_if_needed() {
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
     qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
-    check_system_running "$LLM_VMID" || die "VM ${LLM_VMID} did not start correctly"
+    # The VM is not guaranteed to be running immediately after clone.
+    # Actual startup and guest readiness are handled later in start_and_wait_vm().
   fi
 }
 
