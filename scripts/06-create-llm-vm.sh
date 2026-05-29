@@ -73,6 +73,15 @@ create_cloud_init_userdata() {
   local snippet_name="llm-${LLM_VMID}-user-data.yaml"
   local snippet_path="$snippet_dir/$snippet_name"
 
+  # Read SSH public key if available
+  local ssh_key_content=""
+  if [[ -f "$SSH_PUBLIC_KEY" ]]; then
+    ssh_key_content="$(cat "$SSH_PUBLIC_KEY")"
+    info "SSH public key found: $SSH_PUBLIC_KEY"
+  else
+    warn "SSH public key not found at $SSH_PUBLIC_KEY - SSH will require password"
+  fi
+
   mkdir -p "$snippet_dir"
   cat > "$snippet_path" <<'YAML'
 #cloud-config
@@ -81,6 +90,15 @@ packages:
   - cloud-guest-utils
   - grub-pc
   - linux-image-generic
+
+# Configure user with SSH access
+users:
+  - name: GUEST_USER_PLACEHOLDER
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+      - SSH_KEY_PLACEHOLDER
 
 # Write DNS configuration via netplan to suppress systemd-resolved warnings
 write_files:
@@ -139,6 +157,10 @@ runcmd:
   - [ bash, -lc, 'sleep 5; growpart /dev/sda 1 || true; partprobe /dev/sda || true; resize2fs $(findmnt -n -o SOURCE /) || true' ]
   - [ bash, -lc, 'sgdisk --move-second-header /dev/sda || true' ]
 YAML
+
+  # Replace placeholders with actual values
+  sed -i "s|GUEST_USER_PLACEHOLDER|$GUEST_USER|g" "$snippet_path"
+  sed -i "s|SSH_KEY_PLACEHOLDER|${ssh_key_content}|g" "$snippet_path"
 
   # Attach the snippet to VM (use local snippets storage)
   qm set "$LLM_VMID" --cicustom "user=local:snippets/$snippet_name" || warn "Failed to set cicustom for $LLM_VMID"
