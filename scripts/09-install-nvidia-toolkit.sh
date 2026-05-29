@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Описание: Устанавливает NVIDIA Container Toolkit внутри гостевой VM.
+# Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 

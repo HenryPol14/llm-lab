@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Описание: Скачивает образ cloud-образа Ubuntu и подготавливает его для Proxmox.
+# Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 require_root

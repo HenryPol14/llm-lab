@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Описание: Настраивает сетевые мосты и правила фаервола на хосте.
+# Комментарий добавлен автоматически — дополните при необходимости.
 NFTABLES_DIR="${NFTABLES_DIR:-/etc/nftables.d}"
 NFTABLES_CONF="${NFTABLES_CONF:-/etc/nftables.conf}"
 

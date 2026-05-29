@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Описание: Деплой стека LLM (Ollama, OpenWebUI и т.д.) в гостевой VM.
+# Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 

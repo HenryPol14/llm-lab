@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Описание: Скрипт для тестирования процесса provision (quick/full тесты).
+# Комментарий добавлен автоматически — дополните при необходимости.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

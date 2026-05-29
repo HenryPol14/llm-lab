@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Описание: Создаёт шаблон VM с cloud-init образом для дальнейшего клонирования.
+# Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 require_root

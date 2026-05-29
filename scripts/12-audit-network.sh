@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Описание: Выполняет аудит сетевых настроек и правил (nftables, маршруты и др.).
+# Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 require_root

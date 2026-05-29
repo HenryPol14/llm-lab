@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Описание: Устанавливает необходимые инструменты и зависимости для Proxmox.
+# Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 require_root
