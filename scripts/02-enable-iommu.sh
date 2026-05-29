@@ -37,7 +37,7 @@ else
   info "IOMMU kernel args are already configured"
 fi
 
-for module in vfio vfio_iommu_type1 vfio_pci vfio_virqfd; do
+for module in vfio vfio_iommu_type1 vfio_pci; do
   ensure_line "$module" /etc/modules
 done
 

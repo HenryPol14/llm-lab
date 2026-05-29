@@ -6,7 +6,7 @@ load_config
 require_root
 
 install_missing_packages \
-  curl wget ca-certificates gnupg lsb-release jq unzip git rsync \
+  curl wget ca-certificates gnupg lsb-release jq yq unzip git rsync \
   qemu-guest-agent cloud-image-utils libguestfs-tools gdisk parted \
   bridge-utils dnsmasq nftables iptables-persistent
 
