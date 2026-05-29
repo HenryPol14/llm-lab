@@ -1,0 +1,64 @@
+{
+  // Пример конфигурации Kilo для использования в VS Code + WSL
+  // Отредактируйте поля `distro`, пути и настройки модели под вашу систему.
+
+  // WSL / Remote settings
+  "wsl": {
+    "enabled": true,               // включить интеграцию с WSL
+    "distro": "Ubuntu-24.04.2",    // имя дистрибутива WSL (проверьте `wsl -l -v`)
+    "workDir": "/home/henry/llm-lab" // рабочая директория внутри WSL
+  },
+
+  // Рекомендуемые расширения (опционально, для авто-установки)
+  "extensions": {
+    "autoInstall": false,
+    "list": [
+      "ms-vscode-remote.remote-wsl",
+      "ms-python.python",
+      "esbenp.prettier-vscode"
+    ]
+  },
+
+  // Общие настройки редактора, применимые при работе в WSL
+  "editor": {
+    "formatOnSave": true,
+    "lintOnSave": true
+  },
+
+  // Настройки Kilo (пример для локального бэкенда / LLM)
+  "kilo": {
+    // Модель: можно указать локальный путь к бинарнику/файлу модели
+    "model": {
+      "type": "local",                     // "local" или "remote"
+      "backend": "llama.cpp",             // пример: llama.cpp, ggml, etc.
+      "path": "/mnt/d/models/ggml-model.bin" // путь внутри WSL (пример)
+    },
+
+    // Локальный сервер, если Kilo запускает прокси/сервер
+    "server": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 4096
+    },
+
+    // Опции памяти/контекста
+    "memory": {
+      "enabled": true,
+      "path": "/home/henrynik/llm-lab/.kilo/memory.db"
+    },
+
+    // Безопасность: предпочитайте хранить ключи в переменных окружения
+    "api": {
+      "useEnv": true,
+      "envVar": "KILO_API_KEY"
+    }
+  },
+
+  // Команды, которые удобно выполнять после подключения к WSL
+  "commands": {
+    "postAttach": [
+      "cd /home/henry/llm-lab",
+      "source ~/.venv/bin/activate"
+    ]
+  }
+}
