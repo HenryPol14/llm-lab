@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1078,SC1079,SC2016,SC2026
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 require_root
@@ -61,7 +62,9 @@ configure_vm() {
   # чтобы внутри ВМ команде growpart было куда расширяться.
   # Например, расширяем scsi0 до 30 ГБ (измените под свои нужды, если нужно больше)
   info "Ensuring system disk scsi0 on host is ${LLM_SYSTEM_DISK_GB}G..."
-  qm resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || true
+  if ! qm resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G"; then
+    warn "Failed to resize system disk to ${LLM_SYSTEM_DISK_GB}GB"
+  fi
 
   # Create cloud-init user-data to auto-grow root on first boot
   create_cloud_init_userdata
@@ -158,9 +161,11 @@ runcmd:
   - [ bash, -lc, 'sgdisk --move-second-header /dev/sda || true' ]
 YAML
 
-  # Replace placeholders with actual values
-  sed -i "s|GUEST_USER_PLACEHOLDER|$GUEST_USER|g" "$snippet_path"
-  sed -i "s|SSH_KEY_PLACEHOLDER|${ssh_key_content}|g" "$snippet_path"
+    # Escape replacement strings for sed to avoid breaking YAML when $GUEST_USER or SSH key contain special chars
+    escaped_guest_user="$(printf '%s' "$GUEST_USER" | sed -e 's/[\/&\\]/\\&/g')"
+    escaped_ssh_key_content="$(printf '%s' "$ssh_key_content" | sed -e 's/[\/&\\]/\\&/g')"
+    sed -i "s|GUEST_USER_PLACEHOLDER|$escaped_guest_user|g" "$snippet_path"
+    sed -i "s|SSH_KEY_PLACEHOLDER|$escaped_ssh_key_content|g" "$snippet_path"
 
   # Attach the snippet to VM (use local snippets storage)
   qm set "$LLM_VMID" --cicustom "user=local:snippets/$snippet_name" || warn "Failed to set cicustom for $LLM_VMID"
@@ -241,8 +246,12 @@ confirm_data_disk_reformat() {
         info "Skipping reformat. Use REFORMAT_DATA_DISK=1 to force."
         return 1
       else
+        # Non-interactive safety: require explicit flags when no TTY available
+        if [[ ! -t 0 ]]; then
+          die "Non-interactive shell: set REFORMAT_DATA_DISK=1 and CONFIRM_REFORMAT=yes to force"
+        fi
         local confirm
-        read -p "Confirm reformat data disk? This WILL DESTROY DATA. [yes/no]: " confirm
+        read -r -p "Confirm reformat data disk? This WILL DESTROY DATA. [yes/no]: " confirm
         [[ "$confirm" == "yes" ]] || die "Aborted by user"
         info "Formatting data disk"
         return 0
@@ -265,6 +274,7 @@ set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
 MOUNT=/mnt/llm-data
+  # shellcheck disable=SC1078,SC2016
 GUEST_USER="'"$GUEST_USER"'"
 
 if [[ -b "$DISK" ]]; then
@@ -287,9 +297,10 @@ if [[ -b "$DISK" ]]; then
   # Configure Docker to use the external data disk
   if command -v dockerd >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
     mkdir -p /etc/docker
+    # shellcheck disable=SC1079,SC2026
     cat > /etc/docker/daemon.json <<'JSON'
-{"data-root":"/mnt/llm-data/docker"}
-JSON
+  {"data-root":"/mnt/llm-data/docker"}
+  JSON
     systemctl daemon-reload || true
     systemctl restart docker || true
     systemctl enable docker || true
@@ -300,7 +311,8 @@ fi
 
 setup_ssh_access() {
   ssh-keygen -R "$LLM_IP" >/dev/null 2>&1 || true
-  ssh-keyscan -H "$LLM_IP" >> "${HOME}/.ssh/known_hosts" 2>/dev/null || true
+  mkdir -p "$HOME/.ssh"
+  ssh-keyscan -H "$LLM_IP" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
   info "LLM VM ready: ssh ${GUEST_USER}@${LLM_IP}"
 }
 
