@@ -51,6 +51,7 @@ configure_vm() {
     --balloon 0 \
     --numa 1 \
     --agent enabled=1 \
+    --scsihw virtio-scsi-single \
     --net0 "virtio,bridge=${INTERNAL_BRIDGE},queues=8" \
     --ciuser "$GUEST_USER" \
     --ipconfig0 "ip=${LLM_IP}/${LLM_PREFIX},gw=${INTERNAL_GATEWAY}" \
@@ -67,7 +68,7 @@ configure_vm() {
 }
 
 create_cloud_init_userdata() {
-  # write a cloud-init user-data snippet for this VM so root grows on first boot
+  # write a cloud-init user-data snippet for this VM with system optimization and disk growth
   local snippet_dir="/var/lib/vz/snippets"
   local snippet_name="llm-${LLM_VMID}-user-data.yaml"
   local snippet_path="$snippet_dir/$snippet_name"
@@ -78,6 +79,34 @@ create_cloud_init_userdata() {
 package_update: true
 packages:
   - cloud-guest-utils
+  - grub-pc
+  - linux-image-generic
+
+# Write DNS configuration via netplan to suppress systemd-resolved warnings
+write_files:
+  - path: /etc/netplan/99-dns-config.yaml
+    content: |
+      network:
+        version: 2
+        ethernets:
+          eth0:
+            dhcp4: true
+            dhcp4-overrides:
+              use-dns: false
+            nameservers:
+              addresses: [1.1.1.1, 1.0.0.1, 8.8.8.8]
+              search: []
+    owner: root:root
+    permissions: '0644'
+  - path: /etc/systemd/resolved.conf.d/cloudlab.conf
+    content: |
+      [Resolve]
+      DNS=1.1.1.1 1.0.0.1 8.8.8.8
+      FallbackDNS=8.8.4.4 1.1.1.2
+      DNSSEC=no
+      DNSSECNegativeTrustAnchors=
+    owner: root:root
+    permissions: '0644'
 
 growpart:
   mode: auto
@@ -86,7 +115,29 @@ growpart:
   ignore_growroot_disabled: false
 
 runcmd:
-  - [ bash, -lc, 'set -e; sleep 5; which growpart >/dev/null 2>&1 || apt-get install -y cloud-guest-utils; growpart /dev/sda 1 || true; partprobe /dev/sda || true; resize2fs $(findmnt -n -o SOURCE /) || true' ]
+  # 1. Install required packages for system optimization
+  - [ apt-get, install, -y, cloud-guest-utils, grub-pc ]
+  
+  # 2. Configure kernel boot parameters to suppress harmless warnings
+  - [ sed, -i, 's/^GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="pci=nomsi pciehp.shpchp_bridges=0 ima_policy=tcb"/', /etc/default/grub ]
+  - [ bash, -lc, 'if grep -q "pci=nomsi" /etc/default/grub; then update-grub; fi' ]
+  
+  # 3. Fix cron environment variable warning
+  - [ bash, -lc, 'mkdir -p /etc/systemd/system/cron.service.d' ]
+  - [ bash, -lc, 'echo -e "[Service]\nEnvironment=EXTRA_OPTS=" > /etc/systemd/system/cron.service.d/env.conf' ]
+  - [ systemctl, daemon-reload ]
+  
+  # 4. Apply DNS configuration
+  - [ netplan, apply ]
+  - [ systemctl, restart, systemd-resolved ]
+  
+  # 5. Suppress device-mapper and multipath warnings
+  - [ bash, -lc, 'systemctl stop multipathd || true; systemctl disable multipathd || true; apt-get purge -y multipath-tools >/dev/null 2>&1 || true' ]
+  - [ update-initramfs, -u ]
+  
+  # 6. Grow root filesystem and fix GPT partition table
+  - [ bash, -lc, 'sleep 5; growpart /dev/sda 1 || true; partprobe /dev/sda || true; resize2fs $(findmnt -n -o SOURCE /) || true' ]
+  - [ bash, -lc, 'sgdisk --move-second-header /dev/sda || true' ]
 YAML
 
   # Attach the snippet to VM (use local snippets storage)
@@ -148,6 +199,8 @@ sgdisk -e /dev/sda || true
 partprobe /dev/sda || true
 growpart /dev/sda 1 || true
 resize2fs /dev/sda1 || true
+# Fix GPT partition table warnings by moving secondary header to end of disk
+sgdisk --move-second-header /dev/sda || true
 systemctl stop multipathd || true
 systemctl disable multipathd || true
 apt-get purge -y multipath-tools >/dev/null 2>&1 || true
