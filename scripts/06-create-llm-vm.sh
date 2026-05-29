@@ -37,13 +37,11 @@ clone_vm_if_needed() {
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
     qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
-    
-    info "Ensuring LLM VM system disk is ${LLM_SYSTEM_DISK_GB}GB"
-    qm_command resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${LLM_SYSTEM_DISK_GB}GB"
   fi
 }
 
 configure_vm() {
+  info "Configuring hardware and cloud-init network settings..."
   qm_command set "$LLM_VMID" \
     --name "$LLM_NAME" \
     --memory "$LLM_MEMORY_MB" \
@@ -58,25 +56,19 @@ configure_vm() {
     --ipconfig0 "ip=${LLM_IP}/${LLM_PREFIX},gw=${INTERNAL_GATEWAY}" \
     --nameserver "$DNS_SERVER"
 
-  # [ИСПРАВЛЕНИЕ] Добавляем размер к системному диску на уровне Proxmox, 
-  # чтобы внутри ВМ команде growpart было куда расширяться.
-  # Например, расширяем scsi0 до 30 ГБ (измените под свои нужды, если нужно больше)
+  # Расширяем диск на стороне хоста ОДИН раз перед запуском
   info "Ensuring system disk scsi0 on host is ${LLM_SYSTEM_DISK_GB}G..."
-  if ! qm resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G"; then
-    warn "Failed to resize system disk to ${LLM_SYSTEM_DISK_GB}GB"
-  fi
+  qm_command resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${LLM_SYSTEM_DISK_GB}GB"
 
-  # Create cloud-init user-data to auto-grow root on first boot
+  # Генерируем user-data
   create_cloud_init_userdata
 }
 
 create_cloud_init_userdata() {
-  # write a cloud-init user-data snippet for this VM with system optimization and disk growth
   local snippet_dir="/var/lib/vz/snippets"
   local snippet_name="llm-${LLM_VMID}-user-data.yaml"
   local snippet_path="$snippet_dir/$snippet_name"
 
-  # Read SSH public key if available
   local ssh_key_content=""
   if [[ -f "$SSH_PUBLIC_KEY" ]]; then
     ssh_key_content="$(cat "$SSH_PUBLIC_KEY")"
@@ -92,9 +84,7 @@ package_update: true
 packages:
   - cloud-guest-utils
   - grub-pc
-  - linux-image-generic
 
-# Configure user with SSH access
 users:
   - name: GUEST_USER_PLACEHOLDER
     groups: sudo
@@ -103,7 +93,6 @@ users:
     ssh_authorized_keys:
       - SSH_KEY_PLACEHOLDER
 
-# Write DNS configuration via netplan to suppress systemd-resolved warnings
 write_files:
   - path: /etc/netplan/99-dns-config.yaml
     content: |
@@ -116,16 +105,6 @@ write_files:
               use-dns: false
             nameservers:
               addresses: [1.1.1.1, 1.0.0.1, 8.8.8.8]
-              search: []
-    owner: root:root
-    permissions: '0644'
-  - path: /etc/systemd/resolved.conf.d/cloudlab.conf
-    content: |
-      [Resolve]
-      DNS=1.1.1.1 1.0.0.1 8.8.8.8
-      FallbackDNS=8.8.4.4 1.1.1.2
-      DNSSEC=no
-      DNSSECNegativeTrustAnchors=
     owner: root:root
     permissions: '0644'
 
@@ -136,39 +115,24 @@ growpart:
   ignore_growroot_disabled: false
 
 runcmd:
-  # 1. Install required packages for system optimization
-  - [ apt-get, install, -y, cloud-guest-utils, grub-pc ]
-  
-  # 2. Configure kernel boot parameters to suppress harmless warnings
   - [ sed, -i, 's/^GRUB_CMDLINE_LINUX=""/GRUB_CMDLINE_LINUX="pci=nomsi pciehp.shpchp_bridges=0 ima_policy=tcb"/', /etc/default/grub ]
-  - [ bash, -lc, 'if grep -q "pci=nomsi" /etc/default/grub; then update-grub; fi' ]
-  
-  # 3. Fix cron environment variable warning
-  - [ bash, -lc, 'mkdir -p /etc/systemd/system/cron.service.d' ]
+  - [ bash, -lc, 'update-grub' ]
+  - [ mkdir, -p, /etc/systemd/system/cron.service.d ]
   - [ bash, -lc, 'echo -e "[Service]\nEnvironment=EXTRA_OPTS=" > /etc/systemd/system/cron.service.d/env.conf' ]
   - [ systemctl, daemon-reload ]
-  
-  # 4. Apply DNS configuration
   - [ netplan, apply ]
-  - [ systemctl, restart, systemd-resolved ]
-  
-  # 5. Suppress device-mapper and multipath warnings
-  - [ bash, -lc, 'systemctl stop multipathd || true; systemctl disable multipathd || true; apt-get purge -y multipath-tools >/dev/null 2>&1 || true' ]
-  - [ update-initramfs, -u ]
-  
-  # 6. Grow root filesystem and fix GPT partition table
-  - [ bash, -lc, 'sleep 5; growpart /dev/sda 1 || true; partprobe /dev/sda || true; resize2fs $(findmnt -n -o SOURCE /) || true' ]
-  - [ bash, -lc, 'sgdisk --move-second-header /dev/sda || true' ]
+  - [ bash, -lc, 'systemctl stop multipathd || true; systemctl disable multipathd || true; apt-get purge -y multipath-tools || true' ]
+  - [ sgdisk, --move-second-header, /dev/sda ]
+  - [ resize2fs, /dev/sda1 ]
 YAML
 
-    # Escape replacement strings for sed to avoid breaking YAML when $GUEST_USER or SSH key contain special chars
-    escaped_guest_user="$(printf '%s' "$GUEST_USER" | sed -e 's/[\/&\\]/\\&/g')"
-    escaped_ssh_key_content="$(printf '%s' "$ssh_key_content" | sed -e 's/[\/&\\]/\\&/g')"
-    sed -i "s|GUEST_USER_PLACEHOLDER|$escaped_guest_user|g" "$snippet_path"
-    sed -i "s|SSH_KEY_PLACEHOLDER|$escaped_ssh_key_content|g" "$snippet_path"
+  # Безопасная замена плейсхолдеров
+  escaped_guest_user="$(printf '%s' "$GUEST_USER" | sed -e 's/[\/&\\]/\\&/g')"
+  escaped_ssh_key_content="$(printf '%s' "$ssh_key_content" | sed -e 's/[\/&\\]/\\&/g')"
+  sed -i "s|GUEST_USER_PLACEHOLDER|$escaped_guest_user|g" "$snippet_path"
+  sed -i "s|SSH_KEY_PLACEHOLDER|$escaped_ssh_key_content|g" "$snippet_path"
 
-  # Attach the snippet to VM (use local snippets storage)
-  qm set "$LLM_VMID" --cicustom "user=local:snippets/$snippet_name" || warn "Failed to set cicustom for $LLM_VMID"
+  qm_command set "$LLM_VMID" --cicustom "user=local:snippets/$snippet_name" || warn "Failed to set cicustom for $LLM_VMID"
 }
 
 setup_data_disk_storage() {
@@ -217,24 +181,6 @@ start_and_wait_vm() {
   check_system_running "$LLM_VMID" || die "System check failed for VM ${LLM_VMID}"
 }
 
-grow_system_disk() {
-  info "Growing system disk inside the guest..."
-  qm_command guest exec "$LLM_VMID" -- bash -lc '
-set -e
-apt-get clean
-sgdisk -e /dev/sda || true
-partprobe /dev/sda || true
-growpart /dev/sda 1 || true
-resize2fs /dev/sda1 || true
-# Fix GPT partition table warnings by moving secondary header to end of disk
-sgdisk --move-second-header /dev/sda || true
-systemctl stop multipathd || true
-systemctl disable multipathd || true
-apt-get purge -y multipath-tools >/dev/null 2>&1 || true
-update-initramfs -u >/dev/null 2>&1 || true
-'
-}
-
 confirm_data_disk_reformat() {
   local disk_device="/dev/sdb"
   local disk_part="${disk_device}1"
@@ -242,20 +188,28 @@ confirm_data_disk_reformat() {
   if qm_command guest exec "$LLM_VMID" -- test -b "$disk_device" >/dev/null 2>&1; then
     if qm_command guest exec "$LLM_VMID" -- blkid "$disk_part" >/dev/null 2>&1; then
       warn "Data disk $disk_part already has a filesystem"
+      
+      # Если FORCE не равен 1, то сразу выходим (сохраняем данные)
       if [[ "${REFORMAT_DATA_DISK:-0}" != "1" ]]; then
         info "Skipping reformat. Use REFORMAT_DATA_DISK=1 to force."
         return 1
-      else
-        # Non-interactive safety: require explicit flags when no TTY available
-        if [[ ! -t 0 ]]; then
-          die "Non-interactive shell: set REFORMAT_DATA_DISK=1 and CONFIRM_REFORMAT=yes to force"
-        fi
-        local confirm
-        read -r -p "Confirm reformat data disk? This WILL DESTROY DATA. [yes/no]: " confirm
-        [[ "$confirm" == "yes" ]] || die "Aborted by user"
-        info "Formatting data disk"
+      fi
+
+      # Если REFORMAT_DATA_DISK=1, проверяем интерактивность или флаг подтверждения
+      if [[ "${CONFIRM_REFORMAT:-no}" == "yes" ]]; then
+        info "Formatting data disk (forced by CONFIRM_REFORMAT=yes)"
         return 0
       fi
+
+      if [[ ! -t 0 ]]; then
+        die "Non-interactive shell: REFORMAT_DATA_DISK=1 set, but CONFIRM_REFORMAT=yes is missing"
+      fi
+
+      local confirm
+      read -r -p "Confirm reformat data disk? This WILL DESTROY DATA. [yes/no]: " confirm
+      [[ "$confirm" == "yes" ]] || die "Aborted by user"
+      info "Formatting data disk"
+      return 0
     else
       info "No filesystem on $disk_part, will format"
       return 0
@@ -268,14 +222,13 @@ confirm_data_disk_reformat() {
 
 partition_and_mount_data_disk() {
   info "Partitioning and mounting data disk (/dev/sdb)..."
-  # [ИСПРАВЛЕНИЕ] Прокидываем переменную GUEST_USER внутрь окружения ВМ
-  qm_command guest exec "$LLM_VMID" -- bash -lc '
+  
+  # Вместо склеивания кавычек, передаем GUEST_USER как переменную окружения внутри вызова bash
+  qm_command guest exec "$LLM_VMID" -- env GUEST_USER="$GUEST_USER" bash -lc '
 set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
 MOUNT=/mnt/llm-data
-  # shellcheck disable=SC1078,SC2016
-GUEST_USER="'"$GUEST_USER"'"
 
 if [[ -b "$DISK" ]]; then
   if ! blkid "$PART" >/dev/null 2>&1; then
@@ -294,13 +247,12 @@ if [[ -b "$DISK" ]]; then
   mkdir -p "$MOUNT/ollama" "$MOUNT/models" "$MOUNT/docker"
   chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
 
-  # Configure Docker to use the external data disk
+  # Настройка Docker
   if command -v dockerd >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
     mkdir -p /etc/docker
-    # shellcheck disable=SC1079,SC2026
-    cat > /etc/docker/daemon.json <<'JSON'
-  {"data-root":"/mnt/llm-data/docker"}
-  JSON
+    cat > /etc/docker/daemon.json <<JSON
+{"data-root":"/mnt/llm-data/docker"}
+JSON
     systemctl daemon-reload || true
     systemctl restart docker || true
     systemctl enable docker || true
@@ -325,13 +277,10 @@ configure_vm
 setup_data_disk_storage
 setup_gpu_passthrough
 
-# 1. Сначала запускаем ВМ и ждем, пока она поднимется
+# 1. Запуск и ожидание Cloud-Init (он же теперь расширяет root-диск)
 start_and_wait_vm
 
-# 2. Сразу расширяем системный диск, чтобы ОС не задохнулась
-grow_system_disk
-
-# 3. И только теперь работаем с диском данных (теперь гостевой агент ответит)
+# 2. Работа с диском данных
 if confirm_data_disk_reformat; then
   partition_and_mount_data_disk
 fi
