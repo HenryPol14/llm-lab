@@ -36,13 +36,11 @@ clone_vm_if_needed() {
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${MONITORING_VMID} on ${MONITORING_STORAGE}"
     qm_command clone "$TEMPLATE_VMID" "$MONITORING_VMID" --name "$MONITORING_NAME" --full true --storage "$MONITORING_STORAGE"
-    
-    info "Ensuring Monitoring VM system disk is ${MONITORING_SYSTEM_DISK_GB}GB"
-    qm_command resize "$MONITORING_VMID" scsi0 "${MONITORING_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${MONITORING_SYSTEM_DISK_GB}GB"
   fi
 }
 
 configure_vm() {
+  info "Configuring Monitoring VM hardware..."
   qm_command set "$MONITORING_VMID" \
     --name "$MONITORING_NAME" \
     --memory "$MONITORING_MEMORY_MB" \
@@ -54,6 +52,12 @@ configure_vm() {
     --ciuser "$GUEST_USER" \
     --ipconfig0 "ip=${MONITORING_IP}/${MONITORING_PREFIX},gw=${INTERNAL_GATEWAY}" \
     --nameserver "$DNS_SERVER"
+
+  info "Ensuring system disk scsi0 on host is ${MONITORING_SYSTEM_DISK_GB}G..."
+  qm_command resize "$MONITORING_VMID" scsi0 "${MONITORING_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${MONITORING_SYSTEM_DISK_GB}GB"
+  
+  # Опционально: здесь можно вызывать создание cloud-init snippet, если вы хотите 
+  # автоматизировать growpart через метаданные, как в LLM скрипте.
 }
 
 setup_data_disk_storage() {
@@ -64,21 +68,56 @@ setup_data_disk_storage() {
   fi
 }
 
+start_and_wait_vm() {
+  if ! vm_running "$MONITORING_VMID"; then
+    qm_command start "$MONITORING_VMID"
+  fi
+  info "Waiting for Guest Agent to become ready..."
+  guest_is_ready "$MONITORING_VMID" 240 || die "VM ${MONITORING_VMID} not ready"
+  info "Waiting for cloud-init to complete..."
+  wait_for_cloud_init "$MONITORING_VMID" 300 || die "cloud-init failed on VM ${MONITORING_VMID}"
+  check_system_running "$MONITORING_VMID" || die "System check failed for VM ${MONITORING_VMID}"
+}
+
+grow_system_disk() {
+  info "Expanding system disk inside the guest..."
+  qm_command guest exec "$MONITORING_VMID" -- bash -lc '
+set -euo pipefail
+apt-get clean
+sgdisk -e /dev/sda || true
+partprobe /dev/sda || true
+growpart /dev/sda 1 || true
+resize2fs /dev/sda1 || true
+'
+}
+
 confirm_data_reformat() {
   local disk_device="/dev/sdb"
+  local disk_part="${disk_device}1"
+
   if qm_command guest exec "$MONITORING_VMID" -- test -b "$disk_device" >/dev/null 2>&1; then
-    if qm_command guest exec "$MONITORING_VMID" -- blkid "${disk_device}1" >/dev/null 2>&1; then
-      warn "Monitoring data disk already has filesystem"
+    if qm_command guest exec "$MONITORING_VMID" -- blkid "$disk_part" >/dev/null 2>&1; then
+      warn "Monitoring data disk $disk_part already has filesystem"
+      
       if [[ "${REFORMAT_MONITORING_DISK:-0}" != "1" ]]; then
         info "Skip reformat. Use REFORMAT_MONITORING_DISK=1 to force."
         return 1
-      else
-        local confirm
-        read -p "Confirm reformat of monitoring data disk? This WILL DESTROY DATA. [yes/no]: " confirm
-        [[ "$confirm" == "yes" ]] || die "Aborted by user"
-        info "Formatting monitoring data disk"
+      fi
+
+      if [[ "${CONFIRM_REFORMAT:-no}" == "yes" ]]; then
+        info "Formatting data disk (forced by CONFIRM_REFORMAT=yes)"
         return 0
       fi
+
+      if [[ ! -t 0 ]]; then
+        die "Non-interactive shell: REFORMAT_MONITORING_DISK=1 set, but CONFIRM_REFORMAT=yes is missing"
+      fi
+
+      local confirm
+      read -r -p "Confirm reformat of monitoring data disk? This WILL DESTROY DATA. [yes/no]: " confirm
+      [[ "$confirm" == "yes" ]] || die "Aborted by user"
+      info "Formatting monitoring data disk"
+      return 0
     else
       info "No filesystem on monitoring data disk, will format"
       return 0
@@ -90,16 +129,20 @@ confirm_data_reformat() {
 }
 
 partition_monitoring_disk() {
-  qm_command guest exec "$MONITORING_VMID" -- bash -lc '
+  info "Partitioning and mounting monitoring data disk (/dev/sdb)..."
+  # Безопасно прокидываем GUEST_USER внутрь окружения
+  qm_command guest exec "$MONITORING_VMID" -- env GUEST_USER="$GUEST_USER" bash -lc '
 set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
 MOUNT=/mnt/monitoring-data
+
 if [[ -b "$DISK" ]]; then
   if ! blkid "$PART" >/dev/null 2>&1; then
     sgdisk -o "$DISK"
     sgdisk -n 1:0:0 -t 1:8300 "$DISK"
     partprobe "$DISK"
+    sleep 2
     mkfs.ext4 -F -L monitoring "$PART"
   fi
   mkdir -p "$MOUNT"
@@ -108,27 +151,8 @@ if [[ -b "$DISK" ]]; then
     echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
   fi
   mount -a
+  chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
 fi
-'
-}
-
-start_and_wait_vm() {
-  if ! vm_running "$MONITORING_VMID"; then
-    qm_command start "$MONITORING_VMID"
-  fi
-  guest_is_ready "$MONITORING_VMID" 240 || die "VM ${MONITORING_VMID} not ready"
-  wait_for_cloud_init "$MONITORING_VMID" 300 || die "cloud-init failed on VM ${MONITORING_VMID}"
-  check_system_running "$MONITORING_VMID" || die "System check failed for VM ${MONITORING_VMID}"
-}
-
-grow_system_disk() {
-  qm_command guest exec "$MONITORING_VMID" -- bash -lc '
-set -e
-apt-get clean
-sgdisk -e /dev/sda || true
-partprobe /dev/sda || true
-growpart /dev/sda 1 || true
-resize2fs /dev/sda1 || true
 '
 }
 
@@ -138,17 +162,21 @@ setup_ssh_access() {
   info "Monitoring VM ready: ssh ${GUEST_USER}@${MONITORING_IP}"
 }
 
+# ==========================================
+# ОСНОВНОЙ ПОРЯДОК ВЫПОЛНЕНИЯ (ИСПРАВЛЕННЫЙ ПАЙПЛАЙН)
+# ==========================================
+
 clone_vm_if_needed
 configure_vm
 setup_data_disk_storage
 
-if confirm_data_reformat; then
-  partition_monitoring_disk
-fi
-
+# 1. Сначала запускаем машину и ждем гостевой агент
 start_and_wait_vm
+
+# 2. Расширяем системный раздел
 grow_system_disk
 
+# 3. Только ТЕПЕРЬ опрашиваем и форматируем диск данных sdb
 if confirm_data_reformat; then
   partition_monitoring_disk
 fi
