@@ -1,118 +1,169 @@
 #!/usr/bin/env bash
+# Устанавливаем строгий режим:
+# -E: ошибки наследуются функцией ловушки ERR
+# -e: немедленный выход при ошибке
+# -u: ошибка при использовании неопределенных переменных
+# -o pipefail: ошибка в пайплайне, если любая команда завершилась неудачно
 set -Eeuo pipefail
 
+# Определяем корневую директорию проекта
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Путь к файлу конфигурации (устаревший .env формат, если не задан)
 CONFIG_FILE="${CONFIG_FILE:-${PROJECT_ROOT}/config/lab.env}"
+# Путь к файлу конфигурации (предпочтительный YAML формат, если не задан)
 CONFIG_YAML="${CONFIG_YAML:-${PROJECT_ROOT}/config/infra.yaml}"
 
+# Директория для логов аудита (если не задано, используется /var/log/llm-lab)
 AUDIT_LOG_DIR="${AUDIT_LOG_DIR:-/var/log/llm-lab}"
+# Флаг сухого запуска (если true, команды не выполняются, только логируются)
 DRY_RUN="${DRY_RUN:-false}"
+# Флаг принудительной пересборки (0 - нет, 1 - да)
 FORCE_REBUILD="${FORCE_REBUILD:-0}"
 
+# Функция для логирования сообщений с отметкой времени
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+# Функция для вывода информационных сообщений
 info() { log "INFO: $*"; }
+# Функция для вывода предупреждений (направляется в stderr)
 warn() { log "WARN: $*" >&2; }
+# Функция для вывода ошибок и завершения скрипта с кодом 1 (направляется в stderr)
 die() { log "ERROR: $*" >&2; exit 1; }
 
+# Функция для записи сообщений в аудит-лог
 audit_log() {
+  # Проверяем, включено ли логирование аудита (по умолчанию true)
   if [[ "${ENABLE_AUDIT_LOG:-true}" == "true" ]]; then
+    # Создаем директорию для логов аудита, если она не существует
     mkdir -p "$AUDIT_LOG_DIR"
+    # Определяем имя файла лога аудита (ежедневный лог)
     local log_file="$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
+    # Записываем сообщение в лог-файл с отметкой времени
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$log_file"
   fi
 }
 
+# Функция, вызываемая при ошибке (EXIT, ERR)
 on_error() {
   local exit_code=$?
   local line_no=${BASH_LINENO[0]:-unknown}
   local script_name="${BASH_SOURCE[1]:-script}"
+  # Логируем ошибку в stderr
   log "ERROR: ${script_name} failed at line ${line_no} with exit code ${exit_code}" >&2
+  # Записываем ошибку в аудит-лог
   audit_log "ERROR: ${script_name}:${line_no} exit ${exit_code}"
+  # Завершаем скрипт с кодом ошибки
   exit "$exit_code"
 }
+# Устанавливаем ловушку для перехвата ошибок (ERR) и вызова функции on_error
 trap on_error ERR
 
+# Функция, требующая запуска скрипта от имени root
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "Run as root."
 }
 
+# Функция, проверяющая наличие команды в системе
+# Аргументы: $1 - имя команды
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
+# Функция, проверяющая наличие утилиты yq (для парсинга YAML)
 require_yq() {
   require_cmd yq || die "yq is required for YAML config parsing. Install: https://github.com/mikefarah/yq"
 }
 
+# Функция для получения значения из YAML-файла по указанному запросу (yq)
+# Аргументы: $1 - yq-запрос
 yaml_get() {
   local query="$1"
   local value
+  # Выполняем yq-запрос к файлу CONFIG_YAML
   value="$(yq -r "$query" "$CONFIG_YAML")"
+  # Если yq вернул "null", заменяем его на пустую строку
   if [[ "$value" == "null" ]]; then
     value=""
   fi
+  # Выводим полученное значение
   printf '%s' "$value"
 }
 
+# Функция для валидации отдельной сетевой переменной
+# Аргументы: $1 - имя переменной, $2 - значение переменной
 validate_network_variable() {
   local name="$1"
   local value="$2"
 
+  # Проверяем, что значение не пустое
   [[ -n "$value" ]] || die "Network config value $name is required and must not be empty"
+  # Проверяем, что значение не содержит кавычек (потенциально небезопасно)
   [[ "$value" != *"\""* ]] || die "Invalid quoted value loaded for $name: $value"
 }
 
+# Функция для валидации всех сетевых настроек
 validate_network_config() {
+  # Валидируем каждую из необходимых сетевых переменных
   validate_network_variable INTERNAL_BRIDGE "$INTERNAL_BRIDGE"
   validate_network_variable WAN_BRIDGE "$WAN_BRIDGE"
   validate_network_variable INTERNAL_CIDR "$INTERNAL_CIDR"
   validate_network_variable INTERNAL_SUBNET "$INTERNAL_SUBNET"
   validate_network_variable INTERNAL_GATEWAY "$INTERNAL_GATEWAY"
 
+  # Проверяем формат имени внутреннего моста
   [[ "$INTERNAL_BRIDGE" =~ ^[a-zA-Z0-9._-]+$ ]] || die "Invalid bridge name: $INTERNAL_BRIDGE"
+  # Проверяем формат имени WAN моста
   [[ "$WAN_BRIDGE" =~ ^[a-zA-Z0-9._-]+$ ]] || die "Invalid bridge name: $WAN_BRIDGE"
+  # Проверяем формат внутренней подсети (CIDR)
   [[ "$INTERNAL_SUBNET" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] || die "Invalid subnet format: $INTERNAL_SUBNET"
+  # Проверяем формат внутреннего CIDR
   [[ "$INTERNAL_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] || die "Invalid CIDR format: $INTERNAL_CIDR"
+  # Проверяем формат внутреннего шлюза
   [[ "$INTERNAL_GATEWAY" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "Invalid gateway address: $INTERNAL_GATEWAY"
 }
 
+# Функция для генерации конфигурации nftables для белого списка
 nftables_whitelist_config() {
   cat <<EOF
+# Таблица правил nftables для llm_lab
 table inet llm_lab {
+  # Цепочка postrouting для NAT (Source NAT)
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
 
-    # Allow only specific services to internet
+    # Разрешить только определенным сервисам доступ в интернет (DNS, HTTPS)
     ip saddr ${LLM_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
     ip saddr ${LLM_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
 
     ip saddr ${MONITORING_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
     ip saddr ${MONITORING_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
 
-    # Deny all other outbound
+    # Запретить весь остальной исходящий трафик из внутренней подсети в WAN
     ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" drop
   }
 
+  # Цепочка forward для фильтрации транзитного трафика
   chain forward {
     type filter hook forward priority 0; policy drop;
 
-    # LLM VM services - inbound
+    # Разрешить входящие соединения к сервисам LLM VM (порты 3000, 11434)
     ip daddr ${LLM_IP} tcp dport { 3000, 11434 } accept
 
-    # Monitoring VM services - inbound
+    # Разрешить входящие соединения к сервисам Monitoring VM (порты 3000, 9090)
     ip daddr ${MONITORING_IP} tcp dport { 3000, 9090 } accept
 
-    # Allow established connections
+    # Разрешить установленные и связанные соединения
     ct state established,related accept
 
-    # Drop inter-VM communication
+    # Запретить коммуникацию между VM во внутренней подсети
     ip saddr ${INTERNAL_SUBNET} ip daddr ${INTERNAL_SUBNET} drop
   }
 
+  # Цепочка input для входящего трафика на хост
   chain input {
     type filter hook input priority 0; policy accept;
   }
 
+  # Цепочка output для исходящего трафика с хоста
   chain output {
     type filter hook output priority 0; policy accept;
   }
@@ -120,31 +171,43 @@ table inet llm_lab {
 EOF
 }
 
+# Функция для отметки начала шага в логах и аудите
 mark_step() {
   audit_log "STEP_START: $*"
   info "━━━ $* ━━━"
 }
 
+# Функция, требующая наличия указанного хранилища Proxmox VE
+# Аргументы: $1 - имя хранилища
 require_pve_storage() {
   local storage="$1"
+  # Проверяем наличие команды pvesm
   require_cmd pvesm
+  # Проверяем, существует ли указанное хранилище в Proxmox
   pvesm status | awk 'NR > 1 {print $1}' | grep -qxF "$storage" || die "Proxmox storage not found: $storage"
 }
 
+# Функция, утверждающая, что переменная установлена (не пуста)
+# Аргументы: $1 - имя переменной (строка)
 assert_var_set() {
   [[ -n "${!1}" ]] || die "Variable $1 is not set"
 }
 
+# Функция для проверки, выполняется ли скрипт в режиме сухого запуска
 is_dry_run() {
   [[ "$DRY_RUN" == "true" ]]
 }
 
+# Функция для установки отсутствующих пакетов Debian/Ubuntu
+# Аргументы: $@ - список пакетов для установки
 install_missing_packages() {
   local missing=()
   local pkg
+  # Проверяем каждый пакет на наличие
   for pkg in "$@"; do
     dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
   done
+  # Если есть отсутствующие пакеты, устанавливаем их
   if ((${#missing[@]})); then
     info "Installing packages: ${missing[*]}"
     apt-get update -y
@@ -152,76 +215,105 @@ install_missing_packages() {
   fi
 }
 
+# Функция для гарантированного наличия строки в файле
+# Аргументы: $1 - строка, $2 - путь к файлу
 ensure_line() {
   local line="$1"
   local file="$2"
+  # Создаем файл, если он не существует
   touch "$file"
+  # Если строка отсутствует в файле, добавляем ее
   grep -qxF "$line" "$file" || echo "$line" >> "$file"
 }
 
+# Функция для проверки существования VM по ее ID
+# Аргументы: $1 - ID VM
 vm_exists() {
   qm config "$1" >/dev/null 2>&1
 }
 
+# Функция для проверки, запущена ли VM по ее ID
+# Аргументы: $1 - ID VM
 vm_running() {
   qm status "$1" 2>/dev/null | grep -q 'running'
 }
 
+# Функция для ожидания готовности гостевого агента на VM
+# Аргументы: $1 - ID VM, $2 - таймаут в секундах (по умолчанию 180)
 guest_is_ready() {
   local vmid="$1"
   local timeout="${2:-180}"
   local waited=0
   info "Waiting for guest agent on VM ${vmid}"
+  # Цикл ожидания, пока гостевой агент не будет готов
   until qm guest exec "$vmid" -- true >/dev/null 2>&1; do
     sleep 3
     ((waited += 3))
+    # Проверяем таймаут
     if ((waited >= timeout)); then
       die "Guest agent not ready on VM ${vmid} after ${timeout}s"
     fi
   done
 }
 
+# Функция для ожидания завершения работы cloud-init на VM
+# Аргументы: $1 - ID VM, $2 - таймаут в секундах (по умолчанию 300)
 wait_for_cloud_init() {
   local vmid="$1"
   local timeout="${2:-300}"
   local waited=0
   info "Waiting for cloud-init completion on VM ${vmid}"
+  # Цикл ожидания, пока cloud-init не завершится (по наличию файла /var/lib/cloud/boot-finished)
   until qm guest exec "$vmid" -- test -f /var/lib/cloud/boot-finished >/dev/null 2>&1; do
     sleep 5
     ((waited += 5))
+    # Проверяем таймаут
     if ((waited >= timeout)); then
       die "cloud-init did not finish on VM ${vmid} after ${timeout}s"
     fi
   done
 }
 
+# Функция для парсинга вывода команды qm guest exec
+# Аргументы: $1 - сырой вывод команды
+# Возвращает: очищенную строку вывода
 parse_qm_guest_exec_output() {
   local raw="$1"
+  # Проверяем, содержит ли вывод JSON-подобную структуру с "out-data"
   if [[ "$raw" == *'"out-data"'* ]]; then
     local parsed
+    # Извлекаем и очищаем данные из "out-data"
     parsed="$(printf '%s
 ' "$raw" | grep '"out-data"' | sed -e 's/^[[:space:]]*"out-data"[[:space:]]*:[[:space:]]*"//' -e 's/"$//')"
     if [[ -n "$parsed" ]]; then
+      # Удаляем завершающие символы новой строки и заменяем внутренние на пробелы
       parsed="${parsed%\\n}"
       parsed="${parsed//\\n/ }"
       printf '%s' "$parsed"
       return
     fi
   fi
+  # Если "out-data" не найдено или пусто, возвращаем исходный сырой вывод
   printf '%s' "$raw"
 }
 
+# Функция для проверки статуса работы системы внутри VM
+# Аргументы: $1 - ID VM
+# Возвращает: 0 если система работает или находится в приемлемом состоянии, 1 в противном случае
 check_system_running() {
   local vmid="$1"
   local result
   local state
+  # Выполняем команду systemctl is-system-running внутри VM
   result="$(qm guest exec "$vmid" -- systemctl is-system-running 2>/dev/null)" || {
     warn "System running check failed on VM ${vmid}"
     return 1
   }
+  # Парсим вывод и очищаем от символов переноса строки
   state="$(parse_qm_guest_exec_output "$result")"
   state="${state//$'\r'/}"
   state="${state//$'\n'/}"
+  # Анализируем состояние системы
   case "$state" in
     running* )
       info "System is running on VM ${vmid}: ${state}"
@@ -238,17 +330,23 @@ check_system_running() {
   esac
 }
 
+# Функция для проверки сетевого IP-адреса гостевой VM
+# Аргументы: $1 - ID VM, $2 - ожидаемый IP-адрес, $3 - таймаут в секундах (по умолчанию 120)
+# Возвращает: 0 если IP найден, 1 в противном случае
 check_guest_network() {
   local vmid="$1"
   local expected_ip="$2"
   local timeout="${3:-120}"
   local waited=0
   info "Verifying guest network IP ${expected_ip} on VM ${vmid}"
+  # Бесконечный цикл ожидания
   while :; do
     local result
+    # Выполняем команду 'ip -4 addr show' внутри VM
     result="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || {
       sleep 3
       ((waited+=3))
+      # Проверяем таймаут, если команда 'ip' не выполняется
       if ((waited>=timeout)); then
         warn "Guest ${vmid} network check failed to run 'ip' inside guest"
         return 1
@@ -256,6 +354,7 @@ check_guest_network() {
       continue
     }
     local out
+    # Парсим вывод и проверяем наличие ожидаемого IP
     out="$(parse_qm_guest_exec_output "$result")"
     if printf '%s' "$out" | grep -q -- "$expected_ip"; then
       info "Guest ${vmid} has IP ${expected_ip}"
@@ -263,6 +362,7 @@ check_guest_network() {
     fi
     sleep 3
     ((waited+=3))
+    # Проверяем таймаут, если IP не найден
     if ((waited>=timeout)); then
       warn "Guest ${vmid} missing IP ${expected_ip} after ${timeout}s"
       return 1
@@ -270,13 +370,18 @@ check_guest_network() {
   done
 }
 
+# Функция для валидации PCI-устройства (для проброса GPU)
+# Аргументы: $1 - адрес PCI-устройства
 validate_pci_device() {
   local pci_addr="$1"
+  # Требуем наличия команды lspci
   require_cmd lspci
   if [[ -n "$pci_addr" ]]; then
+    # Проверяем, существует ли указанное PCI-устройство
     if ! lspci -s "$pci_addr" >/dev/null 2>&1; then
       die "PCI device not found: $pci_addr"
     fi
+    # Проверяем, не используется ли PCI-устройство уже (FLR enabled)
     if lspci -s "$pci_addr" -vv 2>/dev/null | grep -i "flr" >/dev/null; then
       die "PCI device $pci_addr is already in use (FLR enabled)"
     fi
@@ -286,18 +391,26 @@ validate_pci_device() {
   fi
 }
 
+# Функция для нормализации размера диска в ГБ (удаляет 'G' или 'GB')
+# Аргументы: $1 - строка размера диска (например, "100G" или "100GB")
+# Возвращает: числовое значение размера диска в ГБ
 normalize_gb() {
   local value="$1"
   value="${value%G}"
   value="${value%GB}"
+  # Проверяем, что оставшееся значение является числом
   [[ "$value" =~ ^[0-9]+$ ]] || die "Invalid disk size: $1"
   echo "$value"
 }
 
+# Функция для загрузки конфигурации из YAML-файла
 load_yaml_config() {
+  # Проверяем наличие утилиты yq
   require_yq
+  # Если файл конфигурации существует
   if [[ -f "$CONFIG_YAML" ]]; then
     info "Loading YAML config from $CONFIG_YAML"
+    # Экспортируем переменные из YAML-файла, используя yaml_get
     export LLM_VMID="$(yaml_get '.llm_vm.vmid')"
     export LLM_NAME="$(yaml_get '.llm_vm.name')"
     export LLM_IP="$(yaml_get '.llm_vm.ip')"
@@ -331,6 +444,7 @@ load_yaml_config() {
     export FIREWALL_ENABLED="$(yaml_get '.features.firewall_enabled')"
     export LOGGING_ENABLED="$(yaml_get '.features.logging_enabled')"
     export AUDIT_ENABLED="$(yaml_get '.features.audit_enabled')"
+    # Валидируем сетевые настройки
     validate_network_config
     audit_log "Loaded YAML config"
   else
@@ -338,16 +452,19 @@ load_yaml_config() {
   fi
 }
 
+# Функция для загрузки устаревшей конфигурации из .env файла (устаревший метод)
 load_legacy_config() {
+  # Если файл конфигурации существует
   if [[ -f "$CONFIG_FILE" ]]; then
-    set -a
+    set -a # Экспортировать все переменные, определенные или модифицированные
     warn "Loading legacy config from $CONFIG_FILE (deprecated, use YAML)"
     source "$CONFIG_FILE"
-    set +a
+    set +a # Отключить автоматический экспорт
     audit_log "Loaded legacy config"
   fi
 }
 
+# Главная функция для загрузки конфигурации (предпочитает YAML, затем .env)
 load_config() {
   if [[ -f "$CONFIG_YAML" ]]; then
     load_yaml_config
@@ -358,8 +475,11 @@ load_config() {
   fi
 }
 
+# Функция-обертка для выполнения команд qm (Proxmox)
+# Аргументы: $@ - аргументы для команды qm
 qm_command() {
   local cmd=("qm" "$@")
+  # Если включен режим сухого запуска, логируем команду вместо выполнения
   if is_dry_run; then
     info "[DRY RUN] Would run: ${cmd[*]}"
     return 0
@@ -369,11 +489,15 @@ qm_command() {
   fi
 }
 
+# Функция для выполнения SSH-команд на гостевой VM
+# Аргументы: $1 - IP-адрес/хост гостевой VM, $@ - команды для выполнения на VM
 guest_ssh() {
   local host="$1"
   shift
+  # Опции SSH (по умолчанию: не проверять ключи хоста)
   local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
   local cmd=("ssh" ${opts} "${GUEST_USER:-ubuntu}@${host}" "$@")
+  # Если включен режим сухого запуска, логируем команду вместо выполнения
   if is_dry_run; then
     info "[DRY RUN] Would run: ${cmd[*]}"
     return 0
