@@ -142,74 +142,40 @@ start_and_wait_vm() {
 grow_system_disk() {
   info "Growing system disk inside the guest..."
   qm_command guest exec "$LLM_VMID" -- bash -lc '
-set -Eeuo pipefail
-
-# Improved detection of external (data) disk inside guest.
-# Strategy: find first disk device that is not the root disk and has no mounts/partitions.
-GUEST_USER="'""$GUEST_USER"'""
-MOUNT=/mnt/llm-data
-
-# find root device (e.g., /dev/sda)
-ROOT_DEV=$(findmnt -n -o SOURCE / | sed -E "s/p?[0-9]+$//")
-
-# list candidate disks
-for dev in /dev/sd? /dev/vd? /dev/nvme?n?; do
-  [[ -b "$dev" ]] || continue
-  # normalize nvme partition names
-  dev_base=$(echo "$dev" | sed -E "s/p[0-9]+$//")
-  if [[ "$dev_base" == "$ROOT_DEV" ]]; then
-    continue
-  fi
-  # skip if any partition exists or if it's mounted
-  if ls ${dev_base}* 1>/dev/null 2>&1; then
-    # check partitions
-    if ls ${dev_base}[0-9]* 1>/dev/null 2>&1; then
-      # if partitions exist but none mounted and no filesystem, consider
-      true
-    fi
-  fi
-  # choose this device if it has no partitions with mounts
-  if ! ls ${dev_base}[0-9]* 1>/dev/null 2>&1 || ! mount | grep -q "^${dev_base}"; then
-    DISK="$dev_base"
-    break
-  fi
-done
-
-if [[ -z "${DISK:-}" ]]; then
-  echo "No spare data disk found" >&2
-  exit 0
-fi
-
-PART=${DISK}1
-
-if ! blkid "$PART" >/dev/null 2>&1; then
-  sgdisk -o "$DISK"
-  sgdisk -n 1:0:0 -t 1:8300 "$DISK"
-  partprobe "$DISK"
-  sleep 2
-  mkfs.ext4 -F -L ai-data "$PART"
-fi
-
-UUID=$(blkid -s UUID -o value "$PART")
-mkdir -p "$MOUNT"
-if ! grep -q "$UUID" /etc/fstab 2>/dev/null; then
-  echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
-fi
-mount -a
-mkdir -p "$MOUNT/ollama" "$MOUNT/models" "$MOUNT/docker"
-chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
-
-# Configure Docker to use the external data disk
-if command -v dockerd >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
-  mkdir -p /etc/docker
-  cat > /etc/docker/daemon.json <<'JSON'
-{"data-root":"/mnt/llm-data/docker"}
-JSON
-  systemctl daemon-reload || true
-  systemctl restart docker || true
-  systemctl enable docker || true
-fi
+set -e
+apt-get clean
+sgdisk -e /dev/sda || true
+partprobe /dev/sda || true
+growpart /dev/sda 1 || true
+resize2fs /dev/sda1 || true
+systemctl stop multipathd || true
+systemctl disable multipathd || true
+apt-get purge -y multipath-tools >/dev/null 2>&1 || true
+update-initramfs -u >/dev/null 2>&1 || true
 '
+}
+
+confirm_data_disk_reformat() {
+  local disk_device="/dev/sdb"
+  local disk_part="${disk_device}1"
+
+  if qm_command guest exec "$LLM_VMID" -- test -b "$disk_device" >/dev/null 2>&1; then
+    if qm_command guest exec "$LLM_VMID" -- blkid "$disk_part" >/dev/null 2>&1; then
+      warn "Data disk $disk_part already has a filesystem"
+      if [[ "${REFORMAT_DATA_DISK:-0}" != "1" ]]; then
+        info "Skipping reformat. Use REFORMAT_DATA_DISK=1 to force."
+        return 1
+      else
+        local confirm
+        read -p "Confirm reformat data disk? This WILL DESTROY DATA. [yes/no]: " confirm
+        [[ "$confirm" == "yes" ]] || die "Aborted by user"
+        info "Formatting data disk"
+        return 0
+      fi
+    else
+      info "No filesystem on $disk_part, will format"
+      return 0
+    fi
   else
     warn "Data disk $disk_device not present in VM"
     return 1
