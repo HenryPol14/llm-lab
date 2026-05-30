@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Описание: Скрипт для первоначальной настройки репозитория и окружения на удалённом хосте.
 # Комментарий добавлен автоматически — дополните при необходимости.
-set -Eeuo pipefail
+set -Eeuo pipefail                                       # безопасный режим исполнения bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -28,7 +28,7 @@ command -v scp >/dev/null 2>&1 || { echo "scp not found" >&2; exit 1; }
 
 echo "Preparing ${PROXMOX_USER}@${PROXMOX_HOST}:${REMOTE_DIR}"
 # shellcheck disable=SC2086
-ssh ${SSH_OPTS} "${PROXMOX_USER}@${PROXMOX_HOST}" "mkdir -p '${REMOTE_DIR}'"
+ssh ${SSH_OPTS} "${PROXMOX_USER}@${PROXMOX_HOST}" "mkdir -p '${REMOTE_DIR}'"  # создаем директорию на удалённом хосте
 
 echo "Uploading project files"
 # shellcheck disable=SC2086
@@ -38,7 +38,7 @@ scp ${SSH_OPTS} -r \
   "${PROJECT_ROOT}/monitoring" \
   "${PROJECT_ROOT}/scripts" \
   "${PROJECT_ROOT}/README.md" \
-  "${PROXMOX_USER}@${PROXMOX_HOST}:${REMOTE_DIR}/"
+  "${PROXMOX_USER}@${PROXMOX_HOST}:${REMOTE_DIR}/"  # копируем файлы проекта на удалённый Proxmox
 
 echo "Running deployment on Proxmox"
 # shellcheck disable=SC2086

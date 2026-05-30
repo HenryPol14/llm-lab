@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-require_root
-require_cmd qm
-require_cmd sgdisk
-require_cmd blkid
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
+require_root                                          # проверяем права root
+require_cmd qm                                       # требуем утилиту qm
+require_cmd sgdisk                                   # требуем утилиту sgdisk для разделов
+require_cmd blkid                                    # требуем blkid для идентификации устройств
 
-mark_step "Creating/Updating Monitoring VM (VMID: ${MONITORING_VMID})"
+mark_step "Creating/Updating Monitoring VM (VMID: ${MONITORING_VMID})"  # запись шага для аудита
 
 require_pve_storage "$MONITORING_STORAGE"
 vm_exists "$TEMPLATE_VMID" || die "Template ${TEMPLATE_VMID} not found"
@@ -35,7 +35,7 @@ bilg_check_existing_vm() {
 clone_vm_if_needed() {
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${MONITORING_VMID} on ${MONITORING_STORAGE}"
-    qm_command clone "$TEMPLATE_VMID" "$MONITORING_VMID" --name "$MONITORING_NAME" --full true --storage "$MONITORING_STORAGE"
+    qm_command clone "$TEMPLATE_VMID" "$MONITORING_VMID" --name "$MONITORING_NAME" --full true --storage "$MONITORING_STORAGE"  # клонируем шаблон в monitoring VM
   fi
 }
 
@@ -62,7 +62,7 @@ configure_vm() {
 
 setup_data_disk_storage() {
   if ! qm_command config "$MONITORING_VMID" | grep -q '^scsi1:'; then
-    qm_command set "$MONITORING_VMID" --scsi1 "${MONITORING_STORAGE}:${MONITORING_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
+    qm_command set "$MONITORING_VMID" --scsi1 "${MONITORING_STORAGE}:${MONITORING_DATA_DISK_GB},discard=on,ssd=1,iothread=1"  # добавляем диск данных для мониторинга
   else
     info "Data disk scsi1 already configured for monitoring VM"
   fi
@@ -157,8 +157,8 @@ fi
 }
 
 setup_ssh_access() {
-  ssh-keygen -R "$MONITORING_IP" >/dev/null 2>&1 || true
-  ssh-keyscan -H "$MONITORING_IP" >> "${HOME}/.ssh/known_hosts" 2>/dev/null || true
+  ssh-keygen -R "$MONITORING_IP" >/dev/null 2>&1 || true  # удаляем старый SSH-хост из known_hosts
+  ssh-keyscan -H "$MONITORING_IP" >> "${HOME}/.ssh/known_hosts" 2>/dev/null || true  # добавляем текущий ключ
   info "Monitoring VM ready: ssh ${GUEST_USER}@${MONITORING_IP}"
 }
 

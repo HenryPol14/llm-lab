@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Описание: Скрипт для тестирования процесса provision (quick/full тесты).
 # Комментарий добавлен автоматически — дополните при необходимости.
-set -Eeuo pipefail
+set -Eeuo pipefail  # безопасный режим bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 load_config
 
-mark_step "Testing llm-lab provisioning with idempotency checks"
+mark_step "Testing llm-lab provisioning with idempotency checks"  # логируем начало тестов
 
 require_root
 require_cmd qm

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Описание: Скрипт для мониторинга статуса LLM VM и сервисов.
 # Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
 
 PROXMOX_MODE=0
 if command -v qm >/dev/null 2>&1 && [[ "${EUID:-1}" -eq 0 ]]; then

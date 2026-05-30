@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Описание: Тесты регрессий конфигурации проекта.
 # Комментарий добавлен автоматически — дополните при необходимости.
-set -Eeuo pipefail
+set -Eeuo pipefail  # безопасный режим bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
@@ -33,7 +33,7 @@ assert() {
 test_yaml_get_raw_values() {
   load_config
   local bridge
-  bridge="$(yaml_get '.network.wan_bridge')"
+  bridge="$(yaml_get '.network.wan_bridge')"  # проверяем, что YAML выходит корректно
   [[ "$bridge" == "vmbr0" ]]
 }
 

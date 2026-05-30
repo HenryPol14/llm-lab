@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Описание: Деплой стека LLM (Ollama, OpenWebUI и т.д.) в гостевой VM.
 # Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
 
-TARGET="${1:-${LLM_IP:-${MONITORING_IP:-}}}"
+TARGET="${1:-${LLM_IP:-${MONITORING_IP:-}}}"          # IP целевой VM для деплоя LLM стека
 if [[ -z "$TARGET" ]]; then
   die "Target IP required"
 fi
@@ -23,7 +23,7 @@ setup_remote_directory() {
 transfer_stack() {
   info "Transferring docker compose stack"
   SCP_OPTS="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
-  scp ${SCP_OPTS} -r "${PROJECT_ROOT}/docker/llm/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
+  scp ${SCP_OPTS} -r "${PROJECT_ROOT}/docker/llm/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"  # копируем docker stack на целевую VM
 }
 
 check_existing_containers() {

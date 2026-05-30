@@ -3,7 +3,7 @@
 # Комментарий добавлен автоматически — дополните при необходимости.
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # директория скриптов
 
 "${SCRIPT_DIR}/01-install-proxmox-tools.sh"
 "${SCRIPT_DIR}/02-enable-iommu.sh"

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Описание: Устанавливает NVIDIA Container Toolkit внутри гостевой VM.
 # Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
 
-TARGET="${1:-${LLM_IP:-${MONITORING_IP:-}}}"
+TARGET="${1:-${LLM_IP:-${MONITORING_IP:-}}}"          # IP целевой VM для установки NVIDIA toolkit
 if [[ -z "$TARGET" ]]; then
   die "Target IP required"
 fi
@@ -15,7 +15,7 @@ wait_for_ssh "$TARGET" 240
 
 check_gpu_presence() {
   local gpu_count
-  gpu_count="$(guest_ssh "$TARGET" 'lspci | grep -i nvidia | wc -l' 2>/dev/null || echo "0")"
+  gpu_count="$(guest_ssh "$TARGET" 'lspci | grep -i nvidia | wc -l' 2>/dev/null || echo "0")"  # проверяем наличие NVIDIA GPU внутри гостя
   if [[ "$gpu_count" -eq "0" ]]; then
     info "No NVIDIA GPU detected in guest, skipping NVIDIA toolkit"
     return 1

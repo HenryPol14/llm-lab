@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Описание: Создаёт шаблон VM с cloud-init образом для дальнейшего клонирования.
 # Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-require_root
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
+require_root                                          # проверяем root
 
-TEMPLATE_VMID="${TEMPLATE_VMID:-9000}"
-TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-${STORAGE:-SSD-VMs}}"
+TEMPLATE_VMID="${TEMPLATE_VMID:-9000}"               # VMID для шаблона
+TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-${STORAGE:-SSD-VMs}}"  # хранилище для шаблона
 UBUNTU_IMAGE_PATH="${UBUNTU_IMAGE_PATH:-/var/lib/vz/template/qcow2/ubuntu-noble.img}"
 PREPARED_IMAGE_PATH="${PREPARED_IMAGE_PATH:-/var/lib/vz/template/qcow2/ubuntu-noble-llm-prepared.img}"
 SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-$HOME/.ssh/id_rsa.pub}"
@@ -14,24 +14,24 @@ INTERNAL_BRIDGE="${INTERNAL_BRIDGE:-vmbr1}"
 
 require_cmd qm
 require_cmd virt-customize
-require_pve_storage "$TEMPLATE_STORAGE"
+require_pve_storage "$TEMPLATE_STORAGE"                # проверяем, что указанное хранилище доступно
 [[ -f "$UBUNTU_IMAGE_PATH" ]] || die "Cloud image not found: $UBUNTU_IMAGE_PATH"
 [[ -f "$SSH_PUBLIC_KEY" ]] || die "SSH public key not found: $SSH_PUBLIC_KEY"
 
 if vm_exists "$TEMPLATE_VMID"; then
   if [[ "${FORCE_REBUILD:-0}" == "1" ]]; then
     warn "FORCE_REBUILD=1: destroying existing template ${TEMPLATE_VMID}"
-    qm destroy "$TEMPLATE_VMID" --purge
+    qm destroy "$TEMPLATE_VMID" --purge                           # удаляем существующий шаблон для пересоздания
   else
     info "Template ${TEMPLATE_VMID} already exists. Updating cloud-init SSH key only."
-    qm set "$TEMPLATE_VMID" --ciuser ubuntu --sshkey "$SSH_PUBLIC_KEY"
+    qm set "$TEMPLATE_VMID" --ciuser ubuntu --sshkey "$SSH_PUBLIC_KEY"  # обновляем SSH ключ в существующем шаблоне
     exit 0
   fi
 fi
 
 if [[ ! -f "$PREPARED_IMAGE_PATH" || "${FORCE_REBUILD:-0}" == "1" ]]; then
   info "Preparing cloud image with guest packages: ${PREPARED_IMAGE_PATH}"
-  cp "$UBUNTU_IMAGE_PATH" "$PREPARED_IMAGE_PATH"
+  cp "$UBUNTU_IMAGE_PATH" "$PREPARED_IMAGE_PATH"                    # копируем образ для подготовки шаблона
   virt-customize -a "$PREPARED_IMAGE_PATH" \
     --install qemu-guest-agent,cloud-init,docker.io,htop,curl,git,jq,nvtop,pciutils,cloud-guest-utils,gdisk,parted,ca-certificates,gnupg,lsb-release,ubuntu-drivers-common,docker-compose,rsync \
     --run-command 'systemctl enable qemu-guest-agent' \
@@ -40,7 +40,7 @@ if [[ ! -f "$PREPARED_IMAGE_PATH" || "${FORCE_REBUILD:-0}" == "1" ]]; then
     --run-command 'printf "vm.swappiness=5\nvm.max_map_count=1048576\nfs.inotify.max_user_watches=1048576\n" >/etc/sysctl.d/99-llm-lab.conf' \
     --run-command 'cloud-init clean' \
     --truncate /etc/machine-id \
-    --run-command 'rm -f /var/lib/dbus/machine-id'
+    --run-command 'rm -f /var/lib/dbus/machine-id'                     # очищаем метаданные cloud-init перед созданием шаблона
 else
   info "Prepared image already exists: ${PREPARED_IMAGE_PATH}"
 fi
@@ -55,10 +55,10 @@ qm create "$TEMPLATE_VMID" \
   --machine q35 \
   --bios ovmf \
   --agent enabled=1 \
-  --net0 "virtio,bridge=${INTERNAL_BRIDGE}"
+  --net0 "virtio,bridge=${INTERNAL_BRIDGE}"  # создаем VM-шаблон без системного диска
 
-qm set "$TEMPLATE_VMID" --efidisk0 "${TEMPLATE_STORAGE}:0,efitype=4m,pre-enrolled-keys=0"
-qm importdisk "$TEMPLATE_VMID" "$PREPARED_IMAGE_PATH" "$TEMPLATE_STORAGE"
+qm set "$TEMPLATE_VMID" --efidisk0 "${TEMPLATE_STORAGE}:0,efitype=4m,pre-enrolled-keys=0"  # добавляем EFI-раздел
+qm importdisk "$TEMPLATE_VMID" "$PREPARED_IMAGE_PATH" "$TEMPLATE_STORAGE"      # импортируем подготовленный диск
 DISK_VOL="$(qm config "$TEMPLATE_VMID" | awk '/unused0:/ {print $2}' | cut -d, -f1)"
 qm set "$TEMPLATE_VMID" --scsihw virtio-scsi-single --scsi0 "${DISK_VOL},discard=on,ssd=1"
 qm set "$TEMPLATE_VMID" --ide2 "${TEMPLATE_STORAGE}:cloudinit"
@@ -68,7 +68,7 @@ qm set "$TEMPLATE_VMID" --ciuser ubuntu --sshkey "$SSH_PUBLIC_KEY" --ipconfig0 i
 
 # Ensure template system disk is at least 30G before converting to template
 info "Checking template disk size"
-current_size_token="$(qm config "$TEMPLATE_VMID" | awk -F'[:, ]+' '/^scsi0:/ { for(i=2;i<=NF;i++) if($i ~ /^size=/) print $i }')"
+current_size_token="$(qm config "$TEMPLATE_VMID" | awk -F'[:, ]+' '/^scsi0:/ { for(i=2;i<=NF;i++) if($i ~ /^size=/) print $i }')"  # читаем текущий размер диска из конфигурации
 if [[ -n "$current_size_token" ]]; then
   current_gb="$(printf '%s' "$current_size_token" | sed -n 's/.*size=\([0-9]\+\)G.*/\1/p')"
   if [[ -n "$current_gb" ]]; then

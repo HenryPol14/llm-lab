@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Описание: Устанавливает runtime (Docker/компоненты) внутри гостевой VM.
 # Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
 
-TARGET="${1:-${LLM_IP:-${MONITORING_IP:-}}}"
+TARGET="${1:-${LLM_IP:-${MONITORING_IP:-}}}"          # целевой IP для установки runtime
 if [[ -z "$TARGET" ]]; then
   die "Target IP required"
 fi

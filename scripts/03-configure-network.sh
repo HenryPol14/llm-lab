@@ -4,18 +4,18 @@
 NFTABLES_DIR="${NFTABLES_DIR:-/etc/nftables.d}"
 NFTABLES_CONF="${NFTABLES_CONF:-/etc/nftables.conf}"
 
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-require_root
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
+require_root                                          # проверяем права root
 
-mark_step "Configuring network and firewall with whitelist rules"
+mark_step "Configuring network and firewall with whitelist rules"  # фиксируем шаг в журнале
 
 require_cmd ip
 require_cmd nft
 
 setup_internal_bridge() {
   info "Setting up internal bridge ${INTERNAL_BRIDGE}"
-  mkdir -p /etc/network/interfaces.d
+  mkdir -p /etc/network/interfaces.d                             # создаем каталог для дополнительных сетевых конфигураций
   cat >/etc/network/interfaces.d/llm-lab.cfg <<EOF
 auto ${INTERNAL_BRIDGE}
 iface ${INTERNAL_BRIDGE} inet static
@@ -42,11 +42,11 @@ EOF
 
 enable_ip_forwarding() {
   info "Enabling IP forwarding"
-  mkdir -p /etc/sysctl.d
+  mkdir -p /etc/sysctl.d                                       # создаем директорию для системных параметров
   cat >/etc/sysctl.d/99-llm-lab-forwarding.conf <<EOF
 net.ipv4.ip_forward=1
 EOF
-  sysctl --system >/dev/null
+  sysctl --system >/dev/null                                   # применяем изменения сразу
 }
 
 create_firewall_whitelist() {

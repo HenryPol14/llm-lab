@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Описание: Деплой мониторингового стека (Prometheus, Grafana) в VM.
 # Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
 
-TARGET="${1:-${MONITORING_IP:-${LLM_IP:-}}}"
+TARGET="${1:-${MONITORING_IP:-${LLM_IP:-}}}"       # IP целевой VM для мониторинга
 if [[ -z "$TARGET" ]]; then
   die "Target IP required"
 fi

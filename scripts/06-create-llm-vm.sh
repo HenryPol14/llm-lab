@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC1078,SC1079,SC2016,SC2026
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-require_root
-require_cmd qm
-require_cmd sgdisk
-require_cmd blkid
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции и утилиты
+load_config                                           # загружаем конфигурацию проекта
+require_root                                          # проверяем права root
+require_cmd qm                                       # требуем утилиту qm для управления Proxmox VM
+require_cmd sgdisk                                   # требуем утилиту sgdisk для работы с разделами
+require_cmd blkid                                    # требуем blkid для определения UUID блоков
 
-mark_step "Creating/Updating LLM VM (VMID: ${LLM_VMID})"
+mark_step "Creating/Updating LLM VM (VMID: ${LLM_VMID})"  # логируем шаг создания LLM VM
 
-require_pve_storage "$LLM_STORAGE"
-vm_exists "$TEMPLATE_VMID" || die "Template ${TEMPLATE_VMID} not found"
+require_pve_storage "$LLM_STORAGE"                    # проверяем доступность хранилища для LLM VM
+vm_exists "$TEMPLATE_VMID" || die "Template ${TEMPLATE_VMID} not found"  # шаблон должен быть создан заранее
 
 bilg_check_existing_vm() {
   if vm_exists "$LLM_VMID"; then
@@ -36,7 +36,7 @@ bilg_check_existing_vm() {
 clone_vm_if_needed() {
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
-    qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
+    qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"  # клон шаблона для LLM VM
   fi
 }
 
@@ -54,15 +54,15 @@ configure_vm() {
     --net0 "virtio,bridge=${INTERNAL_BRIDGE},queues=8" \
     --ciuser "$GUEST_USER" \
     --ipconfig0 "ip=${LLM_IP}/${LLM_PREFIX},gw=${INTERNAL_GATEWAY}" \
-    --nameserver "$DNS_SERVER"
+    --nameserver "$DNS_SERVER"  # базовая сетка и cloud-init
 
   info "Ensuring system disk scsi0 on host is ${LLM_SYSTEM_DISK_GB}G..."
-  qm_command resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${LLM_SYSTEM_DISK_GB}GB"
+  qm_command resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${LLM_SYSTEM_DISK_GB}GB"  # задаем размер системного диска
 }
 
 setup_data_disk_storage() {
   if ! qm_command config "$LLM_VMID" | grep -q '^scsi1:'; then
-    qm_command set "$LLM_VMID" --scsi1 "${LLM_STORAGE}:${LLM_DATA_DISK_GB},discard=on,ssd=1,iothread=1"
+    qm_command set "$LLM_VMID" --scsi1 "${LLM_STORAGE}:${LLM_DATA_DISK_GB},discard=on,ssd=1,iothread=1"  # добавляем диск данных VM
   else
     info "Data disk scsi1 already configured"
   fi
@@ -72,7 +72,7 @@ setup_gpu_passthrough() {
   if [[ "$GPU_PASSTHROUGH" != "true" ]]; then
     info "GPU passthrough disabled in config"
     return 0
-  fi
+  fi  # если passthrough не нужен, пропускаем дальнейшую проверку
 
   if [[ -z "$GPU_PCI_ADDR" ]]; then
     GPU_PCI_ADDR="$(lspci -D -d 10de: | awk 'NR==1 {print $1}')"
@@ -90,7 +90,7 @@ setup_gpu_passthrough() {
 
 start_and_wait_vm() {
   if ! vm_running "$LLM_VMID"; then
-    qm_command start "$LLM_VMID"
+    qm_command start "$LLM_VMID"  # запускаем VM, если она еще не запущена
   fi
   
   info "Waiting for Guest Agent to become ready..."
@@ -187,9 +187,9 @@ fi
 }
 
 setup_ssh_access() {
-  ssh-keygen -R "$LLM_IP" >/dev/null 2>&1 || true
-  mkdir -p "$HOME/.ssh"
-  ssh-keyscan -H "$LLM_IP" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+  ssh-keygen -R "$LLM_IP" >/dev/null 2>&1 || true  # удаляем старый ключ из known_hosts
+  mkdir -p "$HOME/.ssh"                            # создаем директорию SSH клиента
+  ssh-keyscan -H "$LLM_IP" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true  # добавляем новый ключ хоста
   info "LLM VM ready: ssh ${GUEST_USER}@${LLM_IP}"
 }
 
