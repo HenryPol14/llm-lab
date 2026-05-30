@@ -12,6 +12,11 @@ mark_step "Testing llm-lab provisioning with idempotency checks"  # логиру
 require_root
 require_cmd qm
 
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+info() { log "INFO: $*"; }
+warn() { log "WARN: $*" >&2; }
+die() { log "ERROR: $*" >&2; exit 1; }
+
 TEST_MODE="${1:-quick}"
 case "$TEST_MODE" in
   quick|full|sanity)
@@ -21,10 +26,6 @@ case "$TEST_MODE" in
     ;;
 esac
 
-log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
-info() { log "INFO: $*"; }
-warn() { log "WARN: $*" >&2; }
-die() { log "ERROR: $*" >&2; exit 1; }
 
 test_results=()
 test_passed=0
@@ -115,8 +116,6 @@ test_vm_idempotency() {
     local detected_storage
     detected_storage="$(qm config "$vmid" | awk -F'[: ,]+' '/^scsi0:/ {print $2}' | cut -d, -f1 | cut -d: -f1)"
     if [[ -n "$detected_storage" ]]; then
-      local expected_storage
-      expected_storage="${vmid} == ${LLM_VMID} && echo $LLM_STORAGE || echo $MONITORING_STORAGE"
       info "VM ${vmid} storage: $detected_storage"
       return 0
     fi

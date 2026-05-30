@@ -59,7 +59,8 @@ EOF
 }
 
 create_initial_log_file() {
-  local log_file="$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
+  local log_file
+  log_file="$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
   touch "$log_file"
   chmod 640 "$log_file"
   info "Created initial log file: $log_file"

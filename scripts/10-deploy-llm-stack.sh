@@ -10,7 +10,6 @@ if [[ -z "$TARGET" ]]; then
 fi
 
 REMOTE_STACK=/opt/llm-stack
-STACK_NAME=llm-stack
 
 mark_step "Deploying LLM stack to ${TARGET}"
 

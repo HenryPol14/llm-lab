@@ -10,7 +10,6 @@ if [[ -z "$TARGET" ]]; then
 fi
 
 REMOTE_STACK=/opt/monitoring-stack
-STACK_NAME=monitoring-stack
 
 mark_step "Deploying monitoring stack to ${TARGET}"
 
