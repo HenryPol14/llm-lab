@@ -176,8 +176,12 @@ if guest_exec id "$GUEST_USER" >/dev/null 2>&1; then
   echo "✓ Пользователь $GUEST_USER существует"
   
   # Проверка прав на /mnt/llm-data
-  OWNER=$(guest_exec stat -c "%U:%G" /mnt/llm-data 2>/dev/null)
-  echo "  Владелец /mnt/llm-data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
+  if guest_exec test -d "/mnt/llm-data"; then
+    OWNER=$(guest_exec stat -c "%U:%G" /mnt/llm-data 2>/dev/null)
+    echo "  Владелец /mnt/llm-data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
+  else
+    echo "  Директория /mnt/llm-data отсутствует, проверка владельца пропущена"
+  fi
 else
   echo "✗ Пользователь $GUEST_USER не найден"
 fi

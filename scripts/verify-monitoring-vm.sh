@@ -131,8 +131,12 @@ echo ""
 echo "✓ Проверка пользователя ${GUEST_USER}:"
 if guest_exec id "$GUEST_USER" >/dev/null 2>&1; then
   echo "✓ Пользователь $GUEST_USER существует"
-  OWNER=$(guest_exec stat -c "%U:%G" /mnt/monitoring-data 2>/dev/null || echo "не удалось определить")
-  echo "  Владелец /mnt/monitoring-data: $OWNER"
+  if guest_exec test -d "/mnt/monitoring-data"; then
+    OWNER=$(guest_exec stat -c "%U:%G" /mnt/monitoring-data 2>/dev/null)
+    echo "  Владелец /mnt/monitoring-data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
+  else
+    echo "  Директория /mnt/monitoring-data отсутствует, проверка владельца пропущена"
+  fi
 else
   echo "✗ Пользователь $GUEST_USER не найден"
 fi
