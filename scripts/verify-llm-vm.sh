@@ -108,13 +108,33 @@ echo ""
 echo "📍 ПРОВЕРКА ВНУТРИ VM"
 echo "───────────────────────────────────────────────────────────────"
 
+guest_exec_raw() {
+  qm guest exec "$LLM_VMID" -- "$@" 2>/dev/null
+}
+
+guest_exec() {
+  local raw
+  local status
+  raw="$(guest_exec_raw "$@")"
+  status="$?"
+  parse_qm_guest_exec_output "$raw"
+  if [[ "$raw" == *'"exitcode"'* ]]; then
+    local remote_status
+    remote_status="$(printf '%s\n' "$raw" | sed -n 's/.*"exitcode"[[:space:]]*:[[:space:]]*\([0-9]\+\).*/\1/p' | tail -n1)"
+    if [[ -n "$remote_status" ]]; then
+      return "$remote_status"
+    fi
+  fi
+  return "$status"
+}
+
 # 1. IP адрес
-IP_CONFIG=$(qm guest exec "$LLM_VMID" -- ip -4 addr show 2>/dev/null | grep -E "inet " | tail -1)
+IP_CONFIG=$(guest_exec ip -4 addr show | grep -E "inet " | tail -1)
 echo "✓ IP конфигурация внутри VM:"
 echo "  $IP_CONFIG"
 
 # 2. Проверка наличия целевого IP
-if qm guest exec "$LLM_VMID" -- ip addr show | grep -q "$LLM_IP"; then
+if guest_exec ip addr show | grep -q "$LLM_IP"; then
   echo "✓ Целевой IP $LLM_IP присутствует"
 else
   echo "✗ Целевой IP $LLM_IP не найден"
@@ -122,18 +142,18 @@ fi
 
 # 3. Диски
 echo "✓ Диски внутри VM:"
-qm guest exec "$LLM_VMID" -- lsblk 2>/dev/null | head -10 || echo "  (не удалось получить информацию)"
+guest_exec lsblk | head -10 || echo "  (не удалось получить информацию)"
 
 # 4. Монтирование /mnt/llm-data
-if qm guest exec "$LLM_VMID" -- test -d "/mnt/llm-data" 2>/dev/null; then
+if guest_exec test -d "/mnt/llm-data"; then
   echo "✓ Директория /mnt/llm-data существует"
   
   # Проверка подзаданий
-  MOUNT_INFO=$(qm guest exec "$LLM_VMID" -- df -h /mnt/llm-data 2>/dev/null)
+  MOUNT_INFO=$(guest_exec df -h /mnt/llm-data)
   echo "  $MOUNT_INFO" | tail -1
   
   # Проверка подпапок
-  SUBDIRS=$(qm guest exec "$LLM_VMID" -- ls -la /mnt/llm-data/ 2>/dev/null | grep "^d")
+  SUBDIRS=$(guest_exec ls -la /mnt/llm-data/ | grep "^d")
   if echo "$SUBDIRS" | grep -q "ollama"; then
     echo "✓ Подпапка /mnt/llm-data/ollama существует"
   fi
@@ -149,27 +169,27 @@ fi
 
 # 5. Проверка fstab
 echo "✓ Содержимое /etc/fstab (для /mnt/llm-data):"
-qm guest exec "$LLM_VMID" -- grep "llm-data" /etc/fstab 2>/dev/null || echo "  (запись не найдена)"
+guest_exec grep "llm-data" /etc/fstab 2>/dev/null || echo "  (запись не найдена)"
 
 # 6. Пользователь
-if qm guest exec "$LLM_VMID" -- id "$GUEST_USER" >/dev/null 2>&1; then
+if guest_exec id "$GUEST_USER" >/dev/null 2>&1; then
   echo "✓ Пользователь $GUEST_USER существует"
   
   # Проверка прав на /mnt/llm-data
-  OWNER=$(qm guest exec "$LLM_VMID" -- stat -c "%U:%G" /mnt/llm-data 2>/dev/null)
+  OWNER=$(guest_exec stat -c "%U:%G" /mnt/llm-data 2>/dev/null)
   echo "  Владелец /mnt/llm-data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
 else
   echo "✗ Пользователь $GUEST_USER не найден"
 fi
 
 # 7. Docker конфигурация
-if qm guest exec "$LLM_VMID" -- command -v docker >/dev/null 2>&1; then
+if guest_exec command -v docker >/dev/null 2>&1; then
   echo "✓ Docker установлен"
   
   # Проверка конфига daemon.json
-  if qm guest exec "$LLM_VMID" -- test -f /etc/docker/daemon.json 2>/dev/null; then
+  if guest_exec test -f /etc/docker/daemon.json 2>/dev/null; then
     echo "✓ /etc/docker/daemon.json существует"
-    DOCKER_ROOT=$(qm guest exec "$LLM_VMID" -- grep "data-root" /etc/docker/daemon.json 2>/dev/null || echo "не найдено")
+    DOCKER_ROOT=$(guest_exec grep "data-root" /etc/docker/daemon.json 2>/dev/null || echo "не найдено")
     echo "  Docker root: $DOCKER_ROOT"
   fi
 else
@@ -177,7 +197,7 @@ else
 fi
 
 # 8. Cloud-init статус
-CLOUD_INIT=$(qm guest exec "$LLM_VMID" -- cloud-init status 2>/dev/null)
+CLOUD_INIT=$(guest_exec cloud-init status 2>/dev/null)
 if echo "$CLOUD_INIT" | grep -q "done"; then
   echo "✓ Cloud-init завершен"
 else
