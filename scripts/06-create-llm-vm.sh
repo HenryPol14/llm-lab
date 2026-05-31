@@ -216,7 +216,7 @@ ensure_data_disk_ready() {
 
   # qm guest exec имеет жёсткий таймаут Proxmox (~30 с), которого недостаточно
   # для форматирования диска и перезапуска Docker. Используем SSH напрямую.
-  guest_ssh "$LLM_IP" bash -s -- \
+  guest_ssh "$LLM_IP" sudo bash -s -- \
     "$GUEST_USER" \
     "${REFORMAT_DATA_DISK:-0}" \
     "${CONFIRM_REFORMAT:-no}" \
