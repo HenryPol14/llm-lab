@@ -209,6 +209,11 @@ start_and_wait_vm() {
 ensure_data_disk_ready() {
   info "Ensuring data disk (/dev/sdb) is partitioned, mounted, and ready for Docker..."
 
+  # Очищаем устаревший ключ хоста — VM могла пересоздаваться
+  ssh-keygen -R "$LLM_IP" >/dev/null 2>&1 || true
+  mkdir -p "$HOME/.ssh"
+  ssh-keyscan -H "$LLM_IP" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
   # qm guest exec имеет жёсткий таймаут Proxmox (~30 с), которого недостаточно
   # для форматирования диска и перезапуска Docker. Используем SSH напрямую.
   guest_ssh "$LLM_IP" bash -s -- \
