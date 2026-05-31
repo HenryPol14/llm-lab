@@ -248,7 +248,7 @@ if [[ ! -b "$PART" ]]; then
   [[ -b "$PART" ]]
 fi
 
-if blkid "$PART" >/dev/null 2>&1; then
+if blkid -s TYPE "$PART" 2>/dev/null | grep -q TYPE; then
   if [[ "$REFORMAT_DATA_DISK" == "1" ]]; then
     if [[ "$CONFIRM_REFORMAT" != "yes" ]]; then
       echo "REFORMAT_DATA_DISK=1 requires CONFIRM_REFORMAT=yes" >&2
