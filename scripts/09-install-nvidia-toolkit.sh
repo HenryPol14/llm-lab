@@ -33,17 +33,23 @@ install_nvidia_drivers() {
   info "Installing NVIDIA drivers"
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
-if ! command -v nvidia-smi >/dev/null 2>&1; then
-  # ubuntu-drivers-common is already installed in template
-  ubuntu-drivers install || true
+# Устанавливаем ubuntu-drivers-common если не установлен
+if ! command -v ubuntu-drivers >/dev/null 2>&1; then
+  apt-get update -y >/dev/null 2>&1
+  DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common
 fi
-# nvidia-smi может падать если модуль ядра ещё не загружен — это не ошибка
-nvidia-smi || true
+
+if ! /usr/bin/nvidia-smi >/dev/null 2>&1; then
+  ubuntu-drivers install || true
+else
+  echo "NVIDIA drivers already installed"
+  /usr/bin/nvidia-smi || true
+fi
 EOF
 
-  # Если nvidia-smi не работает — модуль ядра не загружен, нужна перезагрузка
+  # Проверяем через sudo — nvidia-smi может быть не в PATH обычного пользователя
   local smi_ok
-  smi_ok="$(guest_ssh "$TARGET" 'nvidia-smi -L 2>/dev/null | wc -l' || echo "0")"
+  smi_ok="$(guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L 2>/dev/null | wc -l' || echo "0")"
   if [[ "$smi_ok" -eq 0 ]]; then
     info "NVIDIA kernel module not loaded, rebooting VM..."
     guest_ssh "$TARGET" 'sudo reboot' || true
@@ -51,7 +57,7 @@ EOF
     wait_for_ssh "$TARGET" 180
     ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
     ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
-    guest_ssh "$TARGET" 'nvidia-smi' || die "nvidia-smi failed after reboot"
+    guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi' || die "nvidia-smi failed after reboot"
   fi
   info "NVIDIA drivers OK"
 }
