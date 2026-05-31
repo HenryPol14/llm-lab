@@ -81,6 +81,11 @@ normalize_gpu_pci_addr() {
   printf '%s' "$pci_addr"
 }
 
+expected_gpu_hostpci_config() {
+  [[ -n "$GPU_PCI_ADDR" ]] || return 1
+  printf '%s,pcie=1,x-vga=1' "$GPU_PCI_ADDR"
+}
+
 gpu_passthrough_config_matches() {
   local expected_hostpci="$1"
   local config
@@ -142,6 +147,43 @@ setup_gpu_passthrough() {
     --machine q35 \
     --vga none \
     --hostpci0 "$hostpci_config"
+
+  if is_dry_run; then
+    return 0
+  fi
+
+  gpu_passthrough_config_matches "$hostpci_config" ||
+    die "GPU passthrough config was not applied to VM ${LLM_VMID}"
+}
+
+verify_gpu_passthrough() {
+  if [[ "$GPU_PASSTHROUGH" != "true" ]]; then
+    return 0
+  fi
+
+  if is_dry_run; then
+    return 0
+  fi
+
+  local hostpci_config
+  hostpci_config="$(expected_gpu_hostpci_config)" ||
+    die "GPU passthrough enabled, but GPU_PCI_ADDR is empty"
+
+  gpu_passthrough_config_matches "$hostpci_config" ||
+    die "GPU passthrough config missing on VM ${LLM_VMID}; expected hostpci0: ${hostpci_config}"
+
+  info "Verifying NVIDIA GPU is visible inside VM ${LLM_VMID}..."
+  local result
+  result="$(qm_command guest exec "$LLM_VMID" -- lspci 2>/dev/null)" ||
+    die "Failed to run lspci inside VM ${LLM_VMID}"
+
+  local out
+  out="$(parse_qm_guest_exec_output "$result")"
+  if ! printf '%s' "$out" | grep -qi nvidia; then
+    die "NVIDIA GPU is not visible inside VM ${LLM_VMID}; check hostpci0, vfio binding, and cold restart"
+  fi
+
+  info "NVIDIA GPU is visible inside VM ${LLM_VMID}"
 }
 
 start_and_wait_vm() {
@@ -160,6 +202,8 @@ start_and_wait_vm() {
   fi
 
   check_system_running "$LLM_VMID" || die "System check failed for VM ${LLM_VMID}"
+
+  verify_gpu_passthrough
 }
 
 confirm_data_disk_reformat() {
