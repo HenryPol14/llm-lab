@@ -1,138 +1,143 @@
 services:
+
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
+
     ports:
       - "11434:11434"
+
     volumes:
       - /mnt/data/ollama:/root/.ollama
+
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
     gpus: all
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
     logging:
       driver: json-file
       options:
         max-size: 100m
         max-file: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 16G
-        reservations:
-          cpus: '2'
-          memory: 8G
+
     security_opt:
       - no-new-privileges:true
+
     read_only: false
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
     restart: unless-stopped
+
     depends_on:
       ollama:
         condition: service_healthy
+
     ports:
       - "3000:8080"
+
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       DATA_DIR: /app/backend/data
+
     volumes:
       - /mnt/data/openwebui:/app/backend/data
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8080/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
     logging:
       driver: json-file
       options:
         max-size: 100m
         max-file: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 4G
-        reservations:
-          cpus: '1'
-          memory: 2G
+
     security_opt:
       - no-new-privileges:true
+
     read_only: false
 
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
     restart: unless-stopped
+
     command:
       - --path.rootfs=/host
       - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+
     pid: host
+
     ports:
       - "9100:9100"
+
     volumes:
       - /:/host:ro,rslave
+
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9100/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
     logging:
       driver: json-file
       options:
         max-size: 50m
         max-file: 2
+
     security_opt:
       - no-new-privileges:true
       - apparmor:docker-default
+
     read_only: true
 
   dcgm-exporter:
     image: nvcr.io/nvidia/k8s/dcgm-exporter:latest
     container_name: dcgm-exporter
     restart: unless-stopped
+
     ports:
       - "9400:9400"
+
     cap_add:
       - SYS_ADMIN
+
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
     gpus: all
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9400/metrics"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+      disable: true
+
     logging:
       driver: json-file
       options:
         max-size: 50m
         max-file: 2
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '1'
-          memory: 1G
+
     security_opt:
       - no-new-privileges:true
+
     read_only: false
 
 networks:
