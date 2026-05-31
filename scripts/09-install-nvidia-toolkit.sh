@@ -35,14 +35,25 @@ install_nvidia_drivers() {
 set -Eeuo pipefail
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   # ubuntu-drivers-common is already installed in template
-  sudo ubuntu-drivers install || true
-  sleep 5
-  nvidia-smi || true
-else
-  echo "NVIDIA drivers already installed"
-  nvidia-smi
+  ubuntu-drivers install || true
 fi
+# nvidia-smi может падать если модуль ядра ещё не загружен — это не ошибка
+nvidia-smi || true
 EOF
+
+  # Если nvidia-smi не работает — модуль ядра не загружен, нужна перезагрузка
+  local smi_ok
+  smi_ok="$(guest_ssh "$TARGET" 'nvidia-smi -L 2>/dev/null | wc -l' || echo "0")"
+  if [[ "$smi_ok" -eq 0 ]]; then
+    info "NVIDIA kernel module not loaded, rebooting VM..."
+    guest_ssh "$TARGET" 'sudo reboot' || true
+    sleep 15
+    wait_for_ssh "$TARGET" 180
+    ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
+    ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+    guest_ssh "$TARGET" 'nvidia-smi' || die "nvidia-smi failed after reboot"
+  fi
+  info "NVIDIA drivers OK"
 }
 
 install_nvidia_toolkit() {
@@ -67,7 +78,7 @@ configure_nvidia_runtime() {
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
+systemctl restart docker
 sleep 5
 docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi || true
 EOF
