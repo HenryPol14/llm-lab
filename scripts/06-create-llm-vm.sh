@@ -81,6 +81,37 @@ normalize_gpu_pci_addr() {
   printf '%s' "$pci_addr"
 }
 
+gpu_passthrough_config_matches() {
+  local expected_hostpci="$1"
+  local config
+
+  config="$(qm config "$LLM_VMID")" || return 1
+
+  grep -qxF "machine: q35" <<< "$config" &&
+    grep -qxF "vga: none" <<< "$config" &&
+    grep -qxF "hostpci0: ${expected_hostpci}" <<< "$config"
+}
+
+stop_vm_for_gpu_passthrough_change() {
+  if ! vm_running "$LLM_VMID"; then
+    return 0
+  fi
+
+  if is_dry_run; then
+    info "[DRY RUN] Would stop VM ${LLM_VMID} before changing GPU video passthrough settings"
+    return 0
+  fi
+
+  info "Stopping VM ${LLM_VMID} before changing GPU video passthrough settings..."
+  if ! qm_command shutdown "$LLM_VMID" --timeout 120; then
+    warn "Graceful shutdown failed for VM ${LLM_VMID}; forcing stop"
+  fi
+
+  if vm_running "$LLM_VMID"; then
+    qm_command stop "$LLM_VMID"
+  fi
+}
+
 setup_gpu_passthrough() {
   if [[ "$GPU_PASSTHROUGH" != "true" ]]; then
     info "GPU passthrough disabled in config"
@@ -98,16 +129,19 @@ setup_gpu_passthrough() {
 
   GPU_PCI_ADDR="$(normalize_gpu_pci_addr "$GPU_PCI_ADDR")"
   validate_pci_device "$GPU_PCI_ADDR" || die "PCI device validation failed"
+  local hostpci_config="${GPU_PCI_ADDR},pcie=1,x-vga=1"
 
-  if vm_running "$LLM_VMID"; then
-    die "VM ${LLM_VMID} must be stopped before changing GPU video passthrough settings"
+  if gpu_passthrough_config_matches "$hostpci_config"; then
+    info "GPU video passthrough already configured: ${hostpci_config}"
+    return 0
   fi
 
+  stop_vm_for_gpu_passthrough_change
   info "Configuring GPU video passthrough: ${GPU_PCI_ADDR}"
   qm_command set "$LLM_VMID" \
     --machine q35 \
     --vga none \
-    --hostpci0 "${GPU_PCI_ADDR},pcie=1,x-vga=1"
+    --hostpci0 "$hostpci_config"
 }
 
 start_and_wait_vm() {
