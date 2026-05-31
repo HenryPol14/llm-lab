@@ -508,3 +508,26 @@ guest_ssh() {
     ssh ${opts} "${GUEST_USER:-ubuntu}@${host}" "$@"
   fi
 }
+
+# Функция для ожидания готовности SSH на гостевой VM
+# Аргументы: $1 - IP-адрес/хост гостевой VM, $2 - таймаут в секундах (по умолчанию 180)
+wait_for_ssh() {
+  local host="$1"
+  local timeout="${2:-180}"
+  local waited=0
+  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
+
+  info "Waiting for SSH on ${GUEST_USER:-ubuntu}@${host}"
+  while :; do
+    if ssh ${opts} -o ConnectTimeout=5 -o BatchMode=yes "${GUEST_USER:-ubuntu}@${host}" true >/dev/null 2>&1; then
+      info "SSH is ready on ${host}"
+      return 0
+    fi
+
+    sleep 3
+    ((waited += 3))
+    if ((waited >= timeout)); then
+      die "SSH not ready on ${host} after ${timeout}s"
+    fi
+  done
+}
