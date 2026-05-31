@@ -210,7 +210,11 @@ ensure_data_disk_ready() {
   info "Ensuring data disk (/dev/sdb) is partitioned, mounted, and ready for Docker..."
 
   local result
-  result="$(qm_command guest exec "$LLM_VMID" -- env GUEST_USER="$GUEST_USER" REFORMAT_DATA_DISK="${REFORMAT_DATA_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
+  # Используем qm guest exec напрямую с явным --timeout, т.к. подготовка диска
+  # занимает значительно больше дефолтного таймаута Proxmox (30 с).
+  # audit_log дублируем вручную, т.к. обходим qm_command.
+  audit_log "Executing: qm guest exec ${LLM_VMID} (data disk preparation, timeout=600)"
+  result="$(qm guest exec "$LLM_VMID" --timeout 600 -- env GUEST_USER="$GUEST_USER" REFORMAT_DATA_DISK="${REFORMAT_DATA_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
 set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
@@ -266,7 +270,7 @@ for _ in $(seq 1 15); do
   sleep 1
 done
 if [[ -z "$UUID" ]]; then
-  echo "Failed to read UUID from $PART after mkfs (udev not ready?)" >&2
+  echo "Failed to read UUID from $PART after mkfs" >&2
   exit 1
 fi
 mkdir -p "$MOUNT"
