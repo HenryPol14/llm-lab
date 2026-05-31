@@ -68,6 +68,19 @@ setup_data_disk_storage() {
   fi
 }
 
+normalize_gpu_pci_addr() {
+  local pci_addr="$1"
+
+  if [[ "$pci_addr" =~ ^[0-9a-fA-F]{2}:[0-9a-fA-F]{2}$ ]]; then
+    pci_addr="0000:${pci_addr}"
+  fi
+
+  # For GPUs with a paired audio function, Proxmox should receive the whole slot
+  # address (for example 0000:01:00), not only function .0.
+  pci_addr="${pci_addr%.0}"
+  printf '%s' "$pci_addr"
+}
+
 setup_gpu_passthrough() {
   if [[ "$GPU_PASSTHROUGH" != "true" ]]; then
     info "GPU passthrough disabled in config"
@@ -75,7 +88,7 @@ setup_gpu_passthrough() {
   fi  # если passthrough не нужен, пропускаем дальнейшую проверку
 
   if [[ -z "$GPU_PCI_ADDR" ]]; then
-    GPU_PCI_ADDR="$(lspci -D -d 10de: | awk 'NR==1 {print $1}')"
+    GPU_PCI_ADDR="$(lspci -D -d 10de: | awk '/VGA compatible controller|3D controller/ {print $1; exit}')"
   fi
 
   if [[ -z "$GPU_PCI_ADDR" ]]; then
@@ -83,9 +96,18 @@ setup_gpu_passthrough() {
     return 0
   fi
 
+  GPU_PCI_ADDR="$(normalize_gpu_pci_addr "$GPU_PCI_ADDR")"
   validate_pci_device "$GPU_PCI_ADDR" || die "PCI device validation failed"
-  info "Configuring GPU passthrough: ${GPU_PCI_ADDR}"
-  qm_command set "$LLM_VMID" --hostpci0 "${GPU_PCI_ADDR},pcie=1"
+
+  if vm_running "$LLM_VMID"; then
+    die "VM ${LLM_VMID} must be stopped before changing GPU video passthrough settings"
+  fi
+
+  info "Configuring GPU video passthrough: ${GPU_PCI_ADDR}"
+  qm_command set "$LLM_VMID" \
+    --machine q35 \
+    --vga none \
+    --hostpci0 "${GPU_PCI_ADDR},pcie=1,x-vga=1"
 }
 
 start_and_wait_vm() {

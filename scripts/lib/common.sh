@@ -381,9 +381,11 @@ validate_pci_device() {
     if ! lspci -s "$pci_addr" >/dev/null 2>&1; then
       die "PCI device not found: $pci_addr"
     fi
-    # Проверяем, не используется ли PCI-устройство уже (FLR enabled)
-    if lspci -s "$pci_addr" -vv 2>/dev/null | grep -i "flr" >/dev/null; then
-      die "PCI device $pci_addr is already in use (FLR enabled)"
+    # FLR is a reset capability, not an "in use" flag. Warn on host GPU drivers instead.
+    local kernel_driver
+    kernel_driver="$(lspci -s "$pci_addr" -k 2>/dev/null | awk -F': ' '/Kernel driver in use:/ {print $2; exit}')"
+    if [[ -n "$kernel_driver" && "$kernel_driver" != "vfio-pci" ]]; then
+      warn "PCI device $pci_addr is currently bound to host driver '$kernel_driver'; passthrough may require vfio-pci binding"
     fi
     info "Validated PCI device: $pci_addr"
   else
