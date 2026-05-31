@@ -52,15 +52,15 @@ qm guest exec $VMID -- cat /etc/resolv.conf
 ```bash
 qm guest exec $VMID -- lsblk
 qm guest exec $VMID -- df -h
-qm guest exec $VMID -- ls -lah /mnt/monitoring-data
-qm guest exec $VMID -- grep '/mnt/monitoring-data' /etc/fstab
+qm guest exec $VMID -- ls -lah /mnt/data
+qm guest exec $VMID -- grep '/mnt/data' /etc/fstab
 ```
 
 ### Пользователь и права
 
 ```bash
 qm guest exec $VMID -- id $GUEST_USER
-qm guest exec $VMID -- stat /mnt/monitoring-data
+qm guest exec $VMID -- stat /mnt/data
 ```
 
 ### Cloud-init

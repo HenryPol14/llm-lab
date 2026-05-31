@@ -144,43 +144,43 @@ fi
 echo "✓ Диски внутри VM:"
 guest_exec lsblk | head -10 || echo "  (не удалось получить информацию)"
 
-# 4. Монтирование /mnt/llm-data
-if guest_exec test -d "/mnt/llm-data"; then
-  echo "✓ Директория /mnt/llm-data существует"
+# 4. Монтирование /mnt/data
+if guest_exec test -d "/mnt/data"; then
+  echo "✓ Директория /mnt/data существует"
   
   # Проверка подзаданий
-  MOUNT_INFO=$(guest_exec df -h /mnt/llm-data)
+  MOUNT_INFO=$(guest_exec df -h /mnt/data)
   echo "  $MOUNT_INFO" | tail -1
   
   # Проверка подпапок
-  SUBDIRS=$(guest_exec ls -la /mnt/llm-data/ | grep "^d")
+  SUBDIRS=$(guest_exec ls -la /mnt/data/ | grep "^d")
   if echo "$SUBDIRS" | grep -q "ollama"; then
-    echo "✓ Подпапка /mnt/llm-data/ollama существует"
+    echo "✓ Подпапка /mnt/data/ollama существует"
   fi
   if echo "$SUBDIRS" | grep -q "models"; then
-    echo "✓ Подпапка /mnt/llm-data/models существует"
+    echo "✓ Подпапка /mnt/data/models существует"
   fi
   if echo "$SUBDIRS" | grep -q "docker"; then
-    echo "✓ Подпапка /mnt/llm-data/docker существует"
+    echo "✓ Подпапка /mnt/data/docker существует"
   fi
 else
-  echo "✗ Директория /mnt/llm-data не найдена"
+  echo "✗ Директория /mnt/data не найдена"
 fi
 
 # 5. Проверка fstab
-echo "✓ Содержимое /etc/fstab (для /mnt/llm-data):"
+echo "✓ Содержимое /etc/fstab (для /mnt/data):"
 guest_exec grep "llm-data" /etc/fstab 2>/dev/null || echo "  (запись не найдена)"
 
 # 6. Пользователь
 if guest_exec id "$GUEST_USER" >/dev/null 2>&1; then
   echo "✓ Пользователь $GUEST_USER существует"
   
-  # Проверка прав на /mnt/llm-data
-  if guest_exec test -d "/mnt/llm-data"; then
-    OWNER=$(guest_exec stat -c "%U:%G" /mnt/llm-data 2>/dev/null)
-    echo "  Владелец /mnt/llm-data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
+  # Проверка прав на /mnt/data
+  if guest_exec test -d "/mnt/data"; then
+    OWNER=$(guest_exec stat -c "%U:%G" /mnt/data 2>/dev/null)
+    echo "  Владелец /mnt/data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
   else
-    echo "  Директория /mnt/llm-data отсутствует, проверка владельца пропущена"
+    echo "  Директория /mnt/data отсутствует, проверка владельца пропущена"
   fi
 else
   echo "✗ Пользователь $GUEST_USER не найден"

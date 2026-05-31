@@ -119,27 +119,27 @@ qm guest exec $VMID -- lsblk -f /dev/sdb
 # Монтированные системы
 qm guest exec $VMID -- df -h
 
-# Размер /mnt/llm-data
-qm guest exec $VMID -- du -sh /mnt/llm-data
+# Размер /mnt/data
+qm guest exec $VMID -- du -sh /mnt/data
 
 # UUID разделов в fstab
 qm guest exec $VMID -- grep -E "^UUID" /etc/fstab
 ```
 
-### Содержимое /mnt/llm-data
+### Содержимое /mnt/data
 
 ```bash
 # Проверить наличие директории
-qm guest exec $VMID -- test -d /mnt/llm-data && echo "✓ Директория существует" || echo "✗ Директория не найдена"
+qm guest exec $VMID -- test -d /mnt/data && echo "✓ Директория существует" || echo "✗ Директория не найдена"
 
 # Содержимое директории
-qm guest exec $VMID -- ls -lah /mnt/llm-data
+qm guest exec $VMID -- ls -lah /mnt/data
 
 # Проверить подпапки
-qm guest exec $VMID -- ls /mnt/llm-data/{ollama,models,docker} 2>/dev/null && echo "✓ Все подпапки созданы"
+qm guest exec $VMID -- ls /mnt/data/{ollama,models,docker} 2>/dev/null && echo "✓ Все подпапки созданы"
 
 # Владелец директории (должен быть ubuntu:ubuntu)
-qm guest exec $VMID -- stat -c "%U:%G %a" /mnt/llm-data
+qm guest exec $VMID -- stat -c "%U:%G %a" /mnt/data
 ```
 
 ### Пользователь и права
@@ -151,8 +151,8 @@ qm guest exec $VMID -- id $GUEST_USER
 # Члены группы docker (если установлен)
 qm guest exec $VMID -- groups $GUEST_USER
 
-# Подробная информация о /mnt/llm-data
-qm guest exec $VMID -- stat /mnt/llm-data
+# Подробная информация о /mnt/data
+qm guest exec $VMID -- stat /mnt/data
 ```
 
 ### Cloud-init статус
@@ -234,13 +234,13 @@ scripts/check-llm-vm-quick.sh
 ✅ **Внутри VM:**
 - [ ] IP адрес: $LLM_IP
 - [ ] Диск /dev/sdb присутствует
-- [ ] /mnt/llm-data смонтирован
+- [ ] /mnt/data смонтирован
 - [ ] Подпапки: ollama, models, docker
 - [ ] Владелец: $GUEST_USER:$GUEST_USER
 - [ ] Записи в /etc/fstab
 - [ ] Cloud-init завершен
 - [ ] Docker установлен и конфигурирован
-- [ ] Docker root: /mnt/llm-data/docker
+- [ ] Docker root: /mnt/data/docker
 
 ✅ **SSH доступ:**
 - [ ] SSH подключение работает
@@ -267,7 +267,7 @@ qm guest exec $VMID -- cloud-init status
 qm guest exec $VMID -- tail -100 /var/log/cloud-init-output.log
 ```
 
-### /mnt/llm-data не смонтирован
+### /mnt/data не смонтирован
 ```bash
 # Проверить диск
 qm guest exec $VMID -- lsblk

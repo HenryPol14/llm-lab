@@ -6,7 +6,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - /mnt/ai-data/ollama:/root/.ollama
+      - /mnt/data/ollama:/root/.ollama
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       NVIDIA_VISIBLE_DEVICES: all
@@ -48,7 +48,7 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       DATA_DIR: /app/backend/data
     volumes:
-      - /mnt/ai-data/openwebui:/app/backend/data
+      - /mnt/data/openwebui:/app/backend/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
       interval: 30s

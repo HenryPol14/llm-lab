@@ -6,7 +6,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - /mnt/monitoring-data/prometheus:/prometheus
+      - /mnt/data/prometheus:/prometheus
       - ./prometheus:/etc/prometheus:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -45,7 +45,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - /mnt/monitoring-data/grafana:/var/lib/grafana
+      - /mnt/data/grafana:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
       GF_SECURITY_ADMIN_USER: admin
@@ -86,7 +86,7 @@ services:
     ports:
       - "9093:9093"
     volumes:
-      - /mnt/monitoring-data/alertmanager:/alertmanager
+      - /mnt/data/alertmanager:/alertmanager
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'

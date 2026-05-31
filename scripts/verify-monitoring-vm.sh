@@ -115,27 +115,27 @@ echo "✓ Диски внутри VM:"
 guest_exec lsblk 2>/dev/null | head -15 || echo "  (не удалось получить информацию)"
 
 echo ""
-echo "✓ Монтирование /mnt/monitoring-data:"
-if guest_exec test -d /mnt/monitoring-data 2>/dev/null; then
-  echo "✓ Директория /mnt/monitoring-data существует"
-  guest_exec df -h /mnt/monitoring-data 2>/dev/null
+echo "✓ Монтирование /mnt/data:"
+if guest_exec test -d /mnt/data 2>/dev/null; then
+  echo "✓ Директория /mnt/data существует"
+  guest_exec df -h /mnt/data 2>/dev/null
 else
-  echo "✗ Директория /mnt/monitoring-data не найдена"
+  echo "✗ Директория /mnt/data не найдена"
 fi
 
 echo ""
-echo "✓ Запись в /etc/fstab для /mnt/monitoring-data:"
-guest_exec grep "/mnt/monitoring-data" /etc/fstab 2>/dev/null || echo "  (запись не найдена)"
+echo "✓ Запись в /etc/fstab для /mnt/data:"
+guest_exec grep "/mnt/data" /etc/fstab 2>/dev/null || echo "  (запись не найдена)"
 
 echo ""
 echo "✓ Проверка пользователя ${GUEST_USER}:"
 if guest_exec id "$GUEST_USER" >/dev/null 2>&1; then
   echo "✓ Пользователь $GUEST_USER существует"
-  if guest_exec test -d "/mnt/monitoring-data"; then
-    OWNER=$(guest_exec stat -c "%U:%G" /mnt/monitoring-data 2>/dev/null)
-    echo "  Владелец /mnt/monitoring-data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
+  if guest_exec test -d "/mnt/data"; then
+    OWNER=$(guest_exec stat -c "%U:%G" /mnt/data 2>/dev/null)
+    echo "  Владелец /mnt/data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
   else
-    echo "  Директория /mnt/monitoring-data отсутствует, проверка владельца пропущена"
+    echo "  Директория /mnt/data отсутствует, проверка владельца пропущена"
   fi
 else
   echo "✗ Пользователь $GUEST_USER не найден"

@@ -25,11 +25,11 @@ echo "qm config $VMID | grep '^scsi1:'"
 echo "\n# IP внутри VM"
 echo "qm guest exec $VMID -- ip -4 addr show"
 
-echo "\n# Содержимое /mnt/monitoring-data"
-echo "qm guest exec $VMID -- ls -lah /mnt/monitoring-data"
+echo "\n# Содержимое /mnt/data"
+echo "qm guest exec $VMID -- ls -lah /mnt/data"
 
 echo "\n# Запись fstab"
-echo "qm guest exec $VMID -- grep '/mnt/monitoring-data' /etc/fstab"
+echo "qm guest exec $VMID -- grep '/mnt/data' /etc/fstab"
 
 echo "\n# Проверка пользователя"
 echo "qm guest exec $VMID -- id $GUEST_USER"

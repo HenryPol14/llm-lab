@@ -41,8 +41,8 @@ qm guest exec $VMID -- lsblk
 echo -e "\nМонтирование дисков:"
 qm guest exec $VMID -- df -h
 
-echo -e "\nСодержимое /mnt/llm-data:"
-qm guest exec $VMID -- ls -lah /mnt/llm-data 2>/dev/null || echo "Директория не найдена"
+echo -e "\nСодержимое /mnt/data:"
+qm guest exec $VMID -- ls -lah /mnt/data 2>/dev/null || echo "Директория не найдена"
 
 echo -e "\nФайл /etc/fstab:"
 qm guest exec $VMID -- grep -E "^UUID" /etc/fstab 2>/dev/null || echo "UUID записей не найдено"
@@ -50,8 +50,8 @@ qm guest exec $VMID -- grep -E "^UUID" /etc/fstab 2>/dev/null || echo "UUID за
 echo -e "\nПользователь $GUEST_USER:"
 qm guest exec $VMID -- id $GUEST_USER
 
-echo -e "\nПраво доступа на /mnt/llm-data:"
-qm guest exec $VMID -- stat /mnt/llm-data 2>/dev/null | grep -E "^.*(Uid|Gid|Access):"
+echo -e "\nПраво доступа на /mnt/data:"
+qm guest exec $VMID -- stat /mnt/data 2>/dev/null | grep -E "^.*(Uid|Gid|Access):"
 
 echo -e "\nCloud-init статус:"
 qm guest exec $VMID -- cloud-init status
@@ -60,7 +60,7 @@ echo -e "\nКонфиг Docker (если установлен):"
 qm guest exec $VMID -- cat /etc/docker/daemon.json 2>/dev/null || echo "daemon.json не найден"
 
 echo -e "\nДиск данных UUID в fstab:"
-qm guest exec $VMID -- grep "/mnt/llm-data" /etc/fstab
+qm guest exec $VMID -- grep "/mnt/data" /etc/fstab
 
 # ========== КОМАНДЫ SSH ДОСТУПА ==========
 
@@ -88,8 +88,8 @@ echo ""
 echo "# IP VM"
 echo "qm guest exec $VMID -- hostname -I"
 echo ""
-echo "# Проверка /mnt/llm-data"
-echo "qm guest exec $VMID -- df -h /mnt/llm-data"
+echo "# Проверка /mnt/data"
+echo "qm guest exec $VMID -- df -h /mnt/data"
 echo ""
 echo "# Проверка docker root"
 echo "qm guest exec $VMID -- docker info | grep 'Docker Root Dir'"

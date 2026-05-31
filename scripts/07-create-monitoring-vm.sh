@@ -91,68 +91,58 @@ resize2fs /dev/sda1 || true
 '
 }
 
-confirm_data_reformat() {
-  local disk_device="/dev/sdb"
-  local disk_part="${disk_device}1"
+ensure_monitoring_data_disk_ready() {
+  info "Ensuring monitoring data disk (/dev/sdb) is mounted at /mnt/data..."
 
-  if qm_command guest exec "$MONITORING_VMID" -- test -b "$disk_device" >/dev/null 2>&1; then
-    if qm_command guest exec "$MONITORING_VMID" -- blkid "$disk_part" >/dev/null 2>&1; then
-      warn "Monitoring data disk $disk_part already has filesystem"
-      
-      if [[ "${REFORMAT_MONITORING_DISK:-0}" != "1" ]]; then
-        info "Skip reformat. Use REFORMAT_MONITORING_DISK=1 to force."
-        return 1
-      fi
-
-      if [[ "${CONFIRM_REFORMAT:-no}" == "yes" ]]; then
-        info "Formatting data disk (forced by CONFIRM_REFORMAT=yes)"
-        return 0
-      fi
-
-      if [[ ! -t 0 ]]; then
-        die "Non-interactive shell: REFORMAT_MONITORING_DISK=1 set, but CONFIRM_REFORMAT=yes is missing"
-      fi
-
-      local confirm
-      read -r -p "Confirm reformat of monitoring data disk? This WILL DESTROY DATA. [yes/no]: " confirm
-      [[ "$confirm" == "yes" ]] || die "Aborted by user"
-      info "Formatting monitoring data disk"
-      return 0
-    else
-      info "No filesystem on monitoring data disk, will format"
-      return 0
-    fi
-  else
-    warn "Monitoring data disk $disk_device not present"
-    return 1
-  fi
-}
-
-partition_monitoring_disk() {
-  info "Partitioning and mounting monitoring data disk (/dev/sdb)..."
-  # Безопасно прокидываем GUEST_USER внутрь окружения
-  qm_command guest exec "$MONITORING_VMID" -- env GUEST_USER="$GUEST_USER" bash -lc '
+  qm_command guest exec "$MONITORING_VMID" -- env GUEST_USER="$GUEST_USER" REFORMAT_MONITORING_DISK="${REFORMAT_MONITORING_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
 set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
-MOUNT=/mnt/monitoring-data
+MOUNT=/mnt/data
 
-if [[ -b "$DISK" ]]; then
-  if ! blkid "$PART" >/dev/null 2>&1; then
+if [[ ! -b "$DISK" ]]; then
+  echo "Monitoring data disk $DISK not present" >&2
+  exit 1
+fi
+
+if [[ ! -b "$PART" ]]; then
+  sgdisk -o "$DISK"
+  sgdisk -n 1:0:0 -t 1:8300 "$DISK"
+  partprobe "$DISK"
+  sleep 2
+fi
+
+if blkid "$PART" >/dev/null 2>&1; then
+  if [[ "$REFORMAT_MONITORING_DISK" == "1" ]]; then
+    if [[ "$CONFIRM_REFORMAT" != "yes" ]]; then
+      echo "REFORMAT_MONITORING_DISK=1 requires CONFIRM_REFORMAT=yes" >&2
+      exit 1
+    fi
+    umount "$PART" "$MOUNT" 2>/dev/null || true
     sgdisk -o "$DISK"
     sgdisk -n 1:0:0 -t 1:8300 "$DISK"
     partprobe "$DISK"
     sleep 2
     mkfs.ext4 -F -L monitoring "$PART"
   fi
-  mkdir -p "$MOUNT"
-  UUID=$(blkid -s UUID -o value "$PART")
-  if ! grep -q "$UUID" /etc/fstab; then
-    echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
-  fi
-  mount -a
-  chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
+else
+  mkfs.ext4 -F -L monitoring "$PART"
 fi
+
+UUID=$(blkid -s UUID -o value "$PART")
+mkdir -p "$MOUNT"
+
+if grep -q "$UUID" /etc/fstab 2>/dev/null; then
+  sed -i "s#^UUID=${UUID}[[:space:]].*#UUID=${UUID} ${MOUNT} ext4 defaults,noatime,nodiratime,discard 0 2#" /etc/fstab
+else
+  echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
+fi
+
+mount -a
+mountpoint -q "$MOUNT"
+mkdir -p "$MOUNT/prometheus" "$MOUNT/grafana" "$MOUNT/alertmanager"
+chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
+df -h "$MOUNT"
 '
 }
 
@@ -176,10 +166,8 @@ start_and_wait_vm
 # 2. Расширяем системный раздел
 grow_system_disk
 
-# 3. Только ТЕПЕРЬ опрашиваем и форматируем диск данных sdb
-if confirm_data_reformat; then
-  partition_monitoring_disk
-fi
+# 3. Готовим диск данных sdb
+ensure_monitoring_data_disk_ready
 
 setup_ssh_access
 audit_log "Monitoring VM ${MONITORING_VMID} setup completed successfully"

@@ -38,11 +38,11 @@ Proxmox Host (Ubuntu)
 VM 110: llm-server
 ├─ Docker: Ollama + OpenWebUI + Monitoring exporters
 ├─ GPU: Optional PCI passthrough
-└─ Mounts: /mnt/ai-data/ollama, /mnt/ai-data/models, /mnt/ai-data/docker
+└─ Mounts: /mnt/data/ollama, /mnt/data/models, /mnt/data/docker
 
 VM 120: monitoring-vm
 ├─ Docker: Prometheus + Grafana + Alertmanager
-└─ Mounts: /mnt/monitoring-data/prometheus, /mnt/monitoring-data/grafana
+└─ Mounts: /mnt/data/prometheus, /mnt/data/grafana
 ```
 
 ## 🚀 Быстрый старт

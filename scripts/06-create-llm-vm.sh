@@ -206,83 +206,88 @@ start_and_wait_vm() {
   verify_gpu_passthrough
 }
 
-confirm_data_disk_reformat() {
-  local disk_device="/dev/sdb"
-  local disk_part="${disk_device}1"
+ensure_data_disk_ready() {
+  info "Ensuring data disk (/dev/sdb) is partitioned, mounted, and ready for Docker..."
 
-  if qm_command guest exec "$LLM_VMID" -- test -b "$disk_device" >/dev/null 2>&1; then
-    if qm_command guest exec "$LLM_VMID" -- blkid "$disk_part" >/dev/null 2>&1; then
-      warn "Data disk $disk_part already has a filesystem"
-      
-      # Если FORCE не равен 1, то сразу выходим (сохраняем данные)
-      if [[ "${REFORMAT_DATA_DISK:-0}" != "1" ]]; then
-        info "Skipping reformat. Use REFORMAT_DATA_DISK=1 to force."
-        return 1
-      fi
-
-      # Если REFORMAT_DATA_DISK=1, проверяем интерактивность или флаг подтверждения
-      if [[ "${CONFIRM_REFORMAT:-no}" == "yes" ]]; then
-        info "Formatting data disk (forced by CONFIRM_REFORMAT=yes)"
-        return 0
-      fi
-
-      if [[ ! -t 0 ]]; then
-        die "Non-interactive shell: REFORMAT_DATA_DISK=1 set, but CONFIRM_REFORMAT=yes is missing"
-      fi
-
-      local confirm
-      read -r -p "Confirm reformat data disk? This WILL DESTROY DATA. [yes/no]: " confirm
-      [[ "$confirm" == "yes" ]] || die "Aborted by user"
-      info "Formatting data disk"
-      return 0
-    else
-      info "No filesystem on $disk_part, will format"
-      return 0
-    fi
-  else
-    warn "Data disk $disk_device not present in VM"
-    return 1
-  fi
-}
-
-partition_and_mount_data_disk() {
-  info "Partitioning and mounting data disk (/dev/sdb)..."
-  
-  # Вместо склеивания кавычек, передаем GUEST_USER как переменную окружения внутри вызова bash
-  qm_command guest exec "$LLM_VMID" -- env GUEST_USER="$GUEST_USER" bash -lc '
+  qm_command guest exec "$LLM_VMID" -- env GUEST_USER="$GUEST_USER" REFORMAT_DATA_DISK="${REFORMAT_DATA_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
 set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
-MOUNT=/mnt/llm-data
+MOUNT=/mnt/data
+DOCKER_ROOT="$MOUNT/docker"
 
-if [[ -b "$DISK" ]]; then
-  if ! blkid "$PART" >/dev/null 2>&1; then
+if [[ ! -b "$DISK" ]]; then
+  echo "Data disk $DISK not present in VM" >&2
+  exit 1
+fi
+
+if [[ ! -b "$PART" ]]; then
+  sgdisk -o "$DISK"
+  sgdisk -n 1:0:0 -t 1:8300 "$DISK"
+  partprobe "$DISK"
+  sleep 2
+fi
+
+if blkid "$PART" >/dev/null 2>&1; then
+  if [[ "$REFORMAT_DATA_DISK" == "1" ]]; then
+    if [[ "$CONFIRM_REFORMAT" != "yes" ]]; then
+      echo "REFORMAT_DATA_DISK=1 requires CONFIRM_REFORMAT=yes" >&2
+      exit 1
+    fi
+    umount "$PART" "$MOUNT" 2>/dev/null || true
     sgdisk -o "$DISK"
     sgdisk -n 1:0:0 -t 1:8300 "$DISK"
     partprobe "$DISK"
     sleep 2
     mkfs.ext4 -F -L ai-data "$PART"
   fi
-  UUID=$(blkid -s UUID -o value "$PART")
-  mkdir -p "$MOUNT"
-  if ! grep -q "$UUID" /etc/fstab 2>/dev/null; then
-    echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
-  fi
-  mount -a
-  mkdir -p "$MOUNT/ollama" "$MOUNT/models" "$MOUNT/docker"
-  chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
-
-  # Настройка Docker
-  if command -v dockerd >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
-    mkdir -p /etc/docker
-    cat > /etc/docker/daemon.json <<JSON
-{"data-root":"/mnt/llm-data/docker"}
-JSON
-    systemctl daemon-reload || true
-    systemctl restart docker || true
-    systemctl enable docker || true
-  fi
+else
+  mkfs.ext4 -F -L ai-data "$PART"
 fi
+
+UUID=$(blkid -s UUID -o value "$PART")
+mkdir -p "$MOUNT"
+
+if grep -qE "[[:space:]]/mnt/(ai-data|llm-data)[[:space:]]" /etc/fstab 2>/dev/null; then
+  sed -i -E "s#/mnt/(ai-data|llm-data)#${MOUNT}#g" /etc/fstab
+fi
+
+if grep -q "$UUID" /etc/fstab 2>/dev/null; then
+  sed -i "s#^UUID=${UUID}[[:space:]].*#UUID=${UUID} ${MOUNT} ext4 defaults,noatime,nodiratime,discard 0 2#" /etc/fstab
+else
+  echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
+fi
+
+mount -a
+mountpoint -q "$MOUNT"
+
+mkdir -p "$MOUNT/ollama" "$MOUNT/models" "$MOUNT/openwebui" "$DOCKER_ROOT"
+chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT/ollama" "$MOUNT/models" "$MOUNT/openwebui"
+chown root:root "$DOCKER_ROOT"
+
+mkdir -p /etc/docker
+if [[ -f /etc/docker/daemon.json ]]; then
+  cp /etc/docker/daemon.json /etc/docker/daemon.json.bak.$(date +%Y%m%d%H%M%S)
+fi
+cat > /etc/docker/daemon.json <<JSON
+{
+  "data-root": "/mnt/data/docker",
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m",
+    "max-file": "3"
+  },
+  "storage-driver": "overlay2"
+}
+JSON
+
+systemctl daemon-reload || true
+if command -v dockerd >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
+  systemctl enable docker || true
+  systemctl restart docker || true
+fi
+
+df -h "$MOUNT"
 '
 }
 
@@ -306,9 +311,7 @@ setup_gpu_passthrough
 start_and_wait_vm
 
 # 2. Работа с диском данных
-if confirm_data_disk_reformat; then
-  partition_and_mount_data_disk
-fi
+ensure_data_disk_ready
 
 setup_ssh_access
 audit_log "LLM VM ${LLM_VMID} setup completed successfully"
