@@ -94,9 +94,22 @@ resize2fs /dev/sda1 || true
 ensure_monitoring_data_disk_ready() {
   info "Ensuring monitoring data disk (/dev/sdb) is mounted at /mnt/data..."
 
-  local result
-  result="$(qm_command guest exec "$MONITORING_VMID" -- env GUEST_USER="$GUEST_USER" REFORMAT_MONITORING_DISK="${REFORMAT_MONITORING_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
+  # qm guest exec имеет жёсткий таймаут Proxmox (~30 с), которого недостаточно
+  # для форматирования диска. Используем SSH напрямую.
+  ssh-keygen -R "$MONITORING_IP" >/dev/null 2>&1 || true
+  mkdir -p "$HOME/.ssh"
+  ssh-keyscan -H "$MONITORING_IP" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
+  guest_ssh "$MONITORING_IP" sudo bash -s -- \
+    "$GUEST_USER" \
+    "${REFORMAT_MONITORING_DISK:-0}" \
+    "${CONFIRM_REFORMAT:-no}" \
+    <<'REMOTE'
 set -Eeuo pipefail
+GUEST_USER="$1"
+REFORMAT_MONITORING_DISK="$2"
+CONFIRM_REFORMAT="$3"
+
 DISK=/dev/sdb
 PART=/dev/sdb1
 MOUNT=/mnt/data
@@ -118,7 +131,7 @@ if [[ ! -b "$PART" ]]; then
   [[ -b "$PART" ]]
 fi
 
-if blkid "$PART" >/dev/null 2>&1; then
+if blkid -s TYPE "$PART" 2>/dev/null | grep -q TYPE; then
   if [[ "$REFORMAT_MONITORING_DISK" == "1" ]]; then
     if [[ "$CONFIRM_REFORMAT" != "yes" ]]; then
       echo "REFORMAT_MONITORING_DISK=1 requires CONFIRM_REFORMAT=yes" >&2
@@ -135,12 +148,25 @@ if blkid "$PART" >/dev/null 2>&1; then
     done
     [[ -b "$PART" ]]
     mkfs.ext4 -F -L monitoring "$PART"
+    udevadm settle || true
   fi
 else
   mkfs.ext4 -F -L monitoring "$PART"
+  udevadm settle || true
 fi
 
-UUID=$(blkid -s UUID -o value "$PART")
+# Ждём пока blkid увидит UUID — udev может запаздывать после mkfs
+UUID=""
+for _ in $(seq 1 15); do
+  UUID=$(blkid -s UUID -o value "$PART" 2>/dev/null || true)
+  [[ -n "$UUID" ]] && break
+  sleep 1
+done
+if [[ -z "$UUID" ]]; then
+  echo "Failed to read UUID from $PART after mkfs" >&2
+  exit 1
+fi
+
 mkdir -p "$MOUNT"
 
 sed -i -E "\#[[:space:]]${MOUNT}[[:space:]]#d" /etc/fstab
@@ -153,11 +179,7 @@ findmnt "$MOUNT"
 mkdir -p "$MOUNT/prometheus" "$MOUNT/grafana" "$MOUNT/alertmanager"
 chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
 df -h "$MOUNT"
-')"
-  assert_qm_guest_exec_success "$result" "Monitoring data disk preparation" ||
-    die "Failed to prepare monitoring data disk /dev/sdb inside VM ${MONITORING_VMID}"
-
-  info "$(parse_qm_guest_exec_output "$result")"
+REMOTE
 }
 
 setup_ssh_access() {
