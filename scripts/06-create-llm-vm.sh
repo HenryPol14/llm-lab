@@ -209,7 +209,8 @@ start_and_wait_vm() {
 ensure_data_disk_ready() {
   info "Ensuring data disk (/dev/sdb) is partitioned, mounted, and ready for Docker..."
 
-  qm_command guest exec "$LLM_VMID" -- env GUEST_USER="$GUEST_USER" REFORMAT_DATA_DISK="${REFORMAT_DATA_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
+  local result
+  result="$(qm_command guest exec "$LLM_VMID" -- env GUEST_USER="$GUEST_USER" REFORMAT_DATA_DISK="${REFORMAT_DATA_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
 set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
@@ -225,7 +226,12 @@ if [[ ! -b "$PART" ]]; then
   sgdisk -o "$DISK"
   sgdisk -n 1:0:0 -t 1:8300 "$DISK"
   partprobe "$DISK"
-  sleep 2
+  udevadm settle || true
+  for _ in $(seq 1 10); do
+    [[ -b "$PART" ]] && break
+    sleep 1
+  done
+  [[ -b "$PART" ]]
 fi
 
 if blkid "$PART" >/dev/null 2>&1; then
@@ -238,7 +244,12 @@ if blkid "$PART" >/dev/null 2>&1; then
     sgdisk -o "$DISK"
     sgdisk -n 1:0:0 -t 1:8300 "$DISK"
     partprobe "$DISK"
-    sleep 2
+    udevadm settle || true
+    for _ in $(seq 1 10); do
+      [[ -b "$PART" ]] && break
+      sleep 1
+    done
+    [[ -b "$PART" ]]
     mkfs.ext4 -F -L ai-data "$PART"
   fi
 else
@@ -260,6 +271,7 @@ fi
 
 mount -a
 mountpoint -q "$MOUNT"
+findmnt "$MOUNT"
 
 mkdir -p "$MOUNT/ollama" "$MOUNT/models" "$MOUNT/openwebui" "$DOCKER_ROOT"
 chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT/ollama" "$MOUNT/models" "$MOUNT/openwebui"
@@ -288,7 +300,11 @@ if command -v dockerd >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
 fi
 
 df -h "$MOUNT"
-'
+')"
+  assert_qm_guest_exec_success "$result" "LLM data disk preparation" ||
+    die "Failed to prepare LLM data disk /dev/sdb inside VM ${LLM_VMID}"
+
+  info "$(parse_qm_guest_exec_output "$result")"
 }
 
 setup_ssh_access() {

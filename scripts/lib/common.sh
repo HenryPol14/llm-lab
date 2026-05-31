@@ -297,6 +297,31 @@ parse_qm_guest_exec_output() {
   printf '%s' "$raw"
 }
 
+# Функция для извлечения exitcode из JSON-подобного вывода qm guest exec
+# Аргументы: $1 - сырой вывод команды qm guest exec
+parse_qm_guest_exec_exitcode() {
+  local raw="$1"
+  local exitcode
+
+  exitcode="$(printf '%s\n' "$raw" | sed -nE 's/.*"exitcode"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' | head -n1)"
+  printf '%s' "${exitcode:-0}"
+}
+
+# Функция для проверки успешности qm guest exec по вложенному exitcode
+# Аргументы: $1 - сырой вывод команды, $2 - описание операции
+assert_qm_guest_exec_success() {
+  local raw="$1"
+  local context="${2:-qm guest exec}"
+  local exitcode
+
+  exitcode="$(parse_qm_guest_exec_exitcode "$raw")"
+  if [[ "$exitcode" != "0" ]]; then
+    warn "$context failed inside guest with exitcode ${exitcode}"
+    warn "Guest output: $(parse_qm_guest_exec_output "$raw")"
+    return 1
+  fi
+}
+
 # Функция для проверки статуса работы системы внутри VM
 # Аргументы: $1 - ID VM
 # Возвращает: 0 если система работает или находится в приемлемом состоянии, 1 в противном случае

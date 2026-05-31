@@ -94,7 +94,8 @@ resize2fs /dev/sda1 || true
 ensure_monitoring_data_disk_ready() {
   info "Ensuring monitoring data disk (/dev/sdb) is mounted at /mnt/data..."
 
-  qm_command guest exec "$MONITORING_VMID" -- env GUEST_USER="$GUEST_USER" REFORMAT_MONITORING_DISK="${REFORMAT_MONITORING_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
+  local result
+  result="$(qm_command guest exec "$MONITORING_VMID" -- env GUEST_USER="$GUEST_USER" REFORMAT_MONITORING_DISK="${REFORMAT_MONITORING_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
 set -Eeuo pipefail
 DISK=/dev/sdb
 PART=/dev/sdb1
@@ -109,7 +110,12 @@ if [[ ! -b "$PART" ]]; then
   sgdisk -o "$DISK"
   sgdisk -n 1:0:0 -t 1:8300 "$DISK"
   partprobe "$DISK"
-  sleep 2
+  udevadm settle || true
+  for _ in $(seq 1 10); do
+    [[ -b "$PART" ]] && break
+    sleep 1
+  done
+  [[ -b "$PART" ]]
 fi
 
 if blkid "$PART" >/dev/null 2>&1; then
@@ -122,7 +128,12 @@ if blkid "$PART" >/dev/null 2>&1; then
     sgdisk -o "$DISK"
     sgdisk -n 1:0:0 -t 1:8300 "$DISK"
     partprobe "$DISK"
-    sleep 2
+    udevadm settle || true
+    for _ in $(seq 1 10); do
+      [[ -b "$PART" ]] && break
+      sleep 1
+    done
+    [[ -b "$PART" ]]
     mkfs.ext4 -F -L monitoring "$PART"
   fi
 else
@@ -140,10 +151,15 @@ fi
 
 mount -a
 mountpoint -q "$MOUNT"
+findmnt "$MOUNT"
 mkdir -p "$MOUNT/prometheus" "$MOUNT/grafana" "$MOUNT/alertmanager"
 chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
 df -h "$MOUNT"
-'
+')"
+  assert_qm_guest_exec_success "$result" "Monitoring data disk preparation" ||
+    die "Failed to prepare monitoring data disk /dev/sdb inside VM ${MONITORING_VMID}"
+
+  info "$(parse_qm_guest_exec_output "$result")"
 }
 
 setup_ssh_access() {
