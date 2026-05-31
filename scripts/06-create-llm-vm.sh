@@ -263,11 +263,9 @@ if grep -qE "[[:space:]]/mnt/(ai-data|llm-data)[[:space:]]" /etc/fstab 2>/dev/nu
   sed -i -E "s#/mnt/(ai-data|llm-data)#${MOUNT}#g" /etc/fstab
 fi
 
-if grep -q "$UUID" /etc/fstab 2>/dev/null; then
-  sed -i "s#^UUID=${UUID}[[:space:]].*#UUID=${UUID} ${MOUNT} ext4 defaults,noatime,nodiratime,discard 0 2#" /etc/fstab
-else
-  echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
-fi
+sed -i -E "\#[[:space:]]${MOUNT}[[:space:]]#d" /etc/fstab
+sed -i -E "\#^UUID=${UUID}[[:space:]]#d" /etc/fstab
+echo "UUID=$UUID $MOUNT ext4 defaults,noatime,nodiratime,discard 0 2" >> /etc/fstab
 
 mount -a
 mountpoint -q "$MOUNT"

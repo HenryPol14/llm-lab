@@ -284,7 +284,7 @@ parse_qm_guest_exec_output() {
     local parsed
     # Извлекаем и очищаем данные из "out-data"
     parsed="$(printf '%s
-' "$raw" | grep '"out-data"' | sed -e 's/^[[:space:]]*"out-data"[[:space:]]*:[[:space:]]*"//' -e 's/"$//')"
+' "$raw" | grep '"out-data"' | sed -e 's/^.*"out-data"[[:space:]]*:[[:space:]]*"//' -e 's/"[[:space:]]*,[[:space:]]*"[^"]*"[[:space:]]*:.*$//' -e 's/"[[:space:]]*}[[:space:]]*$//' -e 's/"[,]$//' -e 's/"$//')"
     if [[ -n "$parsed" ]]; then
       # Удаляем завершающие символы новой строки и заменяем внутренние на пробелы
       parsed="${parsed%\\n}"
@@ -295,6 +295,20 @@ parse_qm_guest_exec_output() {
   fi
   # Если "out-data" не найдено или пусто, возвращаем исходный сырой вывод
   printf '%s' "$raw"
+}
+
+# Функция для парсинга stderr из вывода команды qm guest exec
+# Аргументы: $1 - сырой вывод команды
+parse_qm_guest_exec_error() {
+  local raw="$1"
+  local parsed
+
+  parsed="$(printf '%s\n' "$raw" | grep '"err-data"' | sed -e 's/^.*"err-data"[[:space:]]*:[[:space:]]*"//' -e 's/"[[:space:]]*,[[:space:]]*"[^"]*"[[:space:]]*:.*$//' -e 's/"[[:space:]]*}[[:space:]]*$//' -e 's/"[,]$//' -e 's/"$//')" || true
+  if [[ -n "$parsed" ]]; then
+    parsed="${parsed%\\n}"
+    parsed="${parsed//\\n/ }"
+    printf '%s' "$parsed"
+  fi
 }
 
 # Функция для извлечения exitcode из JSON-подобного вывода qm guest exec
@@ -316,8 +330,13 @@ assert_qm_guest_exec_success() {
 
   exitcode="$(parse_qm_guest_exec_exitcode "$raw")"
   if [[ "$exitcode" != "0" ]]; then
+    local err
+    err="$(parse_qm_guest_exec_error "$raw")"
     warn "$context failed inside guest with exitcode ${exitcode}"
     warn "Guest output: $(parse_qm_guest_exec_output "$raw")"
+    if [[ -n "$err" ]]; then
+      warn "Guest error: $err"
+    fi
     return 1
   fi
 }
