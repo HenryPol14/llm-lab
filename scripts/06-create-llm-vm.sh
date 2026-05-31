@@ -251,12 +251,24 @@ if blkid "$PART" >/dev/null 2>&1; then
     done
     [[ -b "$PART" ]]
     mkfs.ext4 -F -L ai-data "$PART"
+    udevadm settle || true
   fi
 else
   mkfs.ext4 -F -L ai-data "$PART"
+  udevadm settle || true
 fi
 
-UUID=$(blkid -s UUID -o value "$PART")
+# Ждём пока blkid увидит UUID — udev может запаздывать после mkfs
+UUID=""
+for _ in $(seq 1 15); do
+  UUID=$(blkid -s UUID -o value "$PART" 2>/dev/null || true)
+  [[ -n "$UUID" ]] && break
+  sleep 1
+done
+if [[ -z "$UUID" ]]; then
+  echo "Failed to read UUID from $PART after mkfs (udev not ready?)" >&2
+  exit 1
+fi
 mkdir -p "$MOUNT"
 
 if grep -qE "[[:space:]]/mnt/(ai-data|llm-data)[[:space:]]" /etc/fstab 2>/dev/null; then
