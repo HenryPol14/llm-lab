@@ -13,12 +13,17 @@ mark_step "Installing guest runtime on ${TARGET}"
 
 wait_for_ssh "$TARGET" 240
 
+# Очищаем устаревший ключ хоста — VM могла пересоздаваться
+ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
+mkdir -p "$HOME/.ssh"
+ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
 REMOTE_DOCKER_ROOT="/mnt/data/docker"
 REMOTE_OLLAMA_ROOT="/mnt/data/ollama"
 REMOTE_MODELS_ROOT="/mnt/data/models"
 
 verify_data_mount() {
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 mountpoint -q /mnt/data
 test -d /mnt/data/docker
@@ -26,7 +31,7 @@ EOF
 }
 
 install_docker_packages() {
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 # Base packages (ca-certificates, curl, gnupg, lsb-release, docker.io, jq, htop) are pre-installed in template.
 # Ensure correct docker-compose variant is available.
@@ -85,7 +90,7 @@ confirm_docker_data_migration() {
 
 stop_docker_safely() {
   info "Stopping Docker services"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 sudo systemctl stop docker || true
 sudo systemctl stop containerd || true
@@ -127,7 +132,7 @@ EOF
 }
 
 configure_docker_daemon() {
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 sudo mkdir -p /etc/docker
 cat <<JSON | sudo tee /etc/docker/daemon.json
@@ -147,7 +152,7 @@ EOF
 
 start_docker_safely() {
   info "Starting Docker services"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 sudo systemctl daemon-reload
 sudo systemctl enable docker
@@ -160,7 +165,7 @@ systemctl status docker --no-pager || true
 systemctl status containerd --no-pager || true
 
 timeout=30
-until docker info >/dev/null 2>&1; do
+until sudo docker info >/dev/null 2>&1; do
   echo "Waiting for docker to be ready..."
   sleep 2
   ((timeout--))
@@ -175,7 +180,7 @@ EOF
 
 verify_docker_config() {
   info "Verifying Docker configuration"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 echo "Docker Root Dir:"
 docker info --format "{{.DockerRootDir}}"
