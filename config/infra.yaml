@@ -36,7 +36,7 @@ llm_vm:
   cores: 4
   system_disk_gb: 40
   data_disk_gb: 120
-  gpu_pci_addr: ""  # Set to empty for no GPU, or specify e.g. "0000:01:00.0"
+  gpu_pci_addr: "0000:01:00"  # GTX 1080 slot; includes VGA and audio functions
 
 monitoring_vm:
   vmid: 120
@@ -53,7 +53,7 @@ guest:
   ssh_opts: "-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30"
 
 features:
-  gpu_passthrough: false
+  gpu_passthrough: true
   firewall_enabled: true
   logging_enabled: true
   audit_enabled: true
