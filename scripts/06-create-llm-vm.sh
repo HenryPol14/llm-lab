@@ -209,13 +209,18 @@ start_and_wait_vm() {
 ensure_data_disk_ready() {
   info "Ensuring data disk (/dev/sdb) is partitioned, mounted, and ready for Docker..."
 
-  local result
-  # Используем qm guest exec напрямую с явным --timeout, т.к. подготовка диска
-  # занимает значительно больше дефолтного таймаута Proxmox (30 с).
-  # audit_log дублируем вручную, т.к. обходим qm_command.
-  audit_log "Executing: qm guest exec ${LLM_VMID} (data disk preparation, timeout=600)"
-  result="$(qm guest exec "$LLM_VMID" --timeout 600 -- env GUEST_USER="$GUEST_USER" REFORMAT_DATA_DISK="${REFORMAT_DATA_DISK:-0}" CONFIRM_REFORMAT="${CONFIRM_REFORMAT:-no}" bash -lc '
+  # qm guest exec имеет жёсткий таймаут Proxmox (~30 с), которого недостаточно
+  # для форматирования диска и перезапуска Docker. Используем SSH напрямую.
+  guest_ssh "$LLM_IP" bash -s -- \
+    "$GUEST_USER" \
+    "${REFORMAT_DATA_DISK:-0}" \
+    "${CONFIRM_REFORMAT:-no}" \
+    <<'REMOTE'
 set -Eeuo pipefail
+GUEST_USER="$1"
+REFORMAT_DATA_DISK="$2"
+CONFIRM_REFORMAT="$3"
+
 DISK=/dev/sdb
 PART=/dev/sdb1
 MOUNT=/mnt/data
@@ -273,6 +278,7 @@ if [[ -z "$UUID" ]]; then
   echo "Failed to read UUID from $PART after mkfs" >&2
   exit 1
 fi
+
 mkdir -p "$MOUNT"
 
 if grep -qE "[[:space:]]/mnt/(ai-data|llm-data)[[:space:]]" /etc/fstab 2>/dev/null; then
@@ -314,11 +320,7 @@ if command -v dockerd >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; then
 fi
 
 df -h "$MOUNT"
-')"
-  assert_qm_guest_exec_success "$result" "LLM data disk preparation" ||
-    die "Failed to prepare LLM data disk /dev/sdb inside VM ${LLM_VMID}"
-
-  info "$(parse_qm_guest_exec_output "$result")"
+REMOTE
 }
 
 setup_ssh_access() {
