@@ -13,6 +13,11 @@ mark_step "Installing NVIDIA Container Toolkit on ${TARGET}"
 
 wait_for_ssh "$TARGET" 240
 
+# Очищаем устаревший ключ хоста — VM могла пересоздаваться
+ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
+mkdir -p "$HOME/.ssh"
+ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
 check_gpu_presence() {
   local gpu_count
   gpu_count="$(guest_ssh "$TARGET" 'lspci | grep -i nvidia | wc -l' 2>/dev/null || echo "0")"  # проверяем наличие NVIDIA GPU внутри гостя
@@ -26,7 +31,7 @@ check_gpu_presence() {
 
 install_nvidia_drivers() {
   info "Installing NVIDIA drivers"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   # ubuntu-drivers-common is already installed in template
@@ -42,7 +47,7 @@ EOF
 
 install_nvidia_toolkit() {
   info "Installing NVIDIA Container Toolkit"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 if dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
   echo "NVIDIA Container Toolkit already installed"
@@ -59,9 +64,9 @@ EOF
 
 configure_nvidia_runtime() {
   info "Configuring NVIDIA runtime for Docker"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
-sudo nvidia-ctk runtime configure --runtime=docker
+nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 sleep 5
 docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi || true
@@ -70,7 +75,7 @@ EOF
 
 verify_installation() {
   info "Verifying NVIDIA Container Toolkit installation"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -EEu
 echo "Docker info:"
 docker info | grep -i nvidia || true
