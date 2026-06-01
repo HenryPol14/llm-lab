@@ -33,22 +33,20 @@ EOF
 install_docker_packages() {
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
-# Base packages (ca-certificates, curl, gnupg, lsb-release, docker.io, jq, htop) are pre-installed in template.
-# Ensure correct docker-compose variant is available.
 
-sudo apt-get update -y >/dev/null 2>&1
+sudo apt-get update -qq
 
 if ! docker compose version >/dev/null 2>&1; then
-  if apt-cache show docker-compose-plugin >/dev/null 2>&1; then
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
-  elif apt-cache show docker-compose-v2 >/dev/null 2>&1; then
+  if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2
+  elif apt-cache show docker-compose-plugin >/dev/null 2>&1; then
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
   else
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose
   fi
 fi
 
-echo "Docker compose variant verified"
+echo "Docker compose variant verified: $(docker compose version)"
 EOF
 }
 
