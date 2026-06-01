@@ -16,7 +16,7 @@ services:
       - '--web.enable-lifecycle'
       - '--storage.tsdb.retention.time=30d'
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      test: ["CMD", "curl--spider", "-q", "http://localhost:9090/-/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -57,7 +57,7 @@ services:
       prometheus:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/login"]
+      test: ["CMD", "curl", "--spider", "-q", "http://localhost:3000/login"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -92,7 +92,7 @@ services:
       - '--storage.path=/alertmanager'
       - '--web.external-url=http://localhost:9093'
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9093/-/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -127,7 +127,7 @@ services:
     volumes:
       - /:/host:ro,rslave
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9100/metrics"]
+      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9100/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3
