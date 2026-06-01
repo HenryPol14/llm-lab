@@ -36,7 +36,8 @@ audit_log() {
     # Создаем директорию для логов аудита, если она не существует
     mkdir -p "$AUDIT_LOG_DIR"
     # Определяем имя файла лога аудита (ежедневный лог)
-    local log_file="$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
+    local log_file
+    log_file="$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
     # Записываем сообщение в лог-файл с отметкой времени
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$log_file"
   fi
@@ -456,51 +457,60 @@ load_yaml_config() {
   # Если файл конфигурации существует
   if [[ -f "$CONFIG_YAML" ]]; then
     info "Loading YAML config from $CONFIG_YAML"
-    # Экспортируем переменные из YAML-файла, используя yaml_get
-    export LLM_VMID="$(yaml_get '.llm_vm.vmid')"
-    export LLM_NAME="$(yaml_get '.llm_vm.name')"
-    export LLM_IP="$(yaml_get '.llm_vm.ip')"
-    export LLM_PREFIX="$(yaml_get '.llm_vm.prefix')"
-    export LLM_MEMORY_MB="$(yaml_get '.llm_vm.memory_mb')"
-    export LLM_CORES="$(yaml_get '.llm_vm.cores')"
-    export LLM_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.system_disk_gb')")"
-    export LLM_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.data_disk_gb')")"
-    export MONITORING_VMID="$(yaml_get '.monitoring_vm.vmid')"
-    export MONITORING_NAME="$(yaml_get '.monitoring_vm.name')"
-    export MONITORING_IP="$(yaml_get '.monitoring_vm.ip')"
-    export MONITORING_PREFIX="$(yaml_get '.monitoring_vm.prefix')"
-    export MONITORING_MEMORY_MB="$(yaml_get '.monitoring_vm.memory_mb')"
-    export MONITORING_CORES="$(yaml_get '.monitoring_vm.cores')"
-    export MONITORING_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.system_disk_gb')")"
-    export MONITORING_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.data_disk_gb')")"
-    export INTERNAL_BRIDGE="$(yaml_get '.network.internal_bridge')"
-    export INTERNAL_GATEWAY="$(yaml_get '.network.internal_gateway')"
-    export DNS_SERVER="$(yaml_get '.network.dns_server')"
-    export INTERNAL_CIDR="$(yaml_get '.network.internal_cidr')"
-    export INTERNAL_SUBNET="$(yaml_get '.network.internal_subnet')"
-    export WAN_BRIDGE="$(yaml_get '.network.wan_bridge')"
-    export TEMPLATE_VMID="$(yaml_get '.template.vmid')"
-    export TEMPLATE_STORAGE="$(yaml_get '.template.storage')"
-    export LLM_STORAGE="$(yaml_get '.storage.llm')"
-    export MONITORING_STORAGE="$(yaml_get '.storage.monitoring')"
-    export GUEST_USER="$(yaml_get '.guest.user')"
-    export SSH_OPTS="$(yaml_get '.guest.ssh_opts')"
-    export GPU_PCI_ADDR="$(yaml_get '.llm_vm.gpu_pci_addr')"
-    export GPU_PASSTHROUGH="$(yaml_get '.features.gpu_passthrough')"
-    export FIREWALL_ENABLED="$(yaml_get '.features.firewall_enabled')"
-    export LOGGING_ENABLED="$(yaml_get '.features.logging_enabled')"
-    export AUDIT_ENABLED="$(yaml_get '.features.audit_enabled')"
-    export PROXMOX_HOST="$(yaml_get '.proxmox.host')"
-    export PROXMOX_USER="$(yaml_get '.proxmox.user')"
-    export NGINX_CTID="$(yaml_get '.nginx_proxy.ctid')"
-    export NGINX_HOSTNAME="$(yaml_get '.nginx_proxy.hostname')"
-    export NGINX_STORAGE="$(yaml_get '.nginx_proxy.storage')"
-    export NGINX_DISK_GB="$(yaml_get '.nginx_proxy.disk_gb')"
-    export NGINX_MEMORY_MB="$(yaml_get '.nginx_proxy.memory_mb')"
-    export NGINX_CORES="$(yaml_get '.nginx_proxy.cores')"
-    export NGINX_WAN_IP="$(yaml_get '.nginx_proxy.wan_ip')"
-    export NGINX_WAN_GW="$(yaml_get '.nginx_proxy.wan_gw')"
-    export LXC_TEMPLATE="$(yaml_get '.nginx_proxy.lxc_template')"
+ # Экспортируем переменные из YAML-файла, используя yaml_get
+ # 1. Объявляем переменные для экспорта
+export LLM_NAME LLM_IP LLM_PREFIX LLM_MEMORY_MB LLM_CORES LLM_SYSTEM_DISK_GB LLM_DATA_DISK_GB
+export MONITORING_VMID MONITORING_NAME MONITORING_IP MONITORING_PREFIX MONITORING_MEMORY_MB MONITORING_CORES MONITORING_SYSTEM_DISK_GB MONITORING_DATA_DISK_GB
+export INTERNAL_BRIDGE INTERNAL_GATEWAY DNS_SERVER INTERNAL_CIDR INTERNAL_SUBNET WAN_BRIDGE
+export TEMPLATE_VMID TEMPLATE_STORAGE LLM_STORAGE MONITORING_STORAGE GUEST_USER SSH_OPTS
+export GPU_PCI_ADDR GPU_PASSTHROUGH FIREWALL_ENABLED LOGGING_ENABLED AUDIT_ENABLED
+export PROXMOX_HOST PROXMOX_USER
+export NGINX_CTID NGINX_HOSTNAME NGINX_STORAGE NGINX_DISK_GB NGINX_MEMORY_MB NGINX_CORES NGINX_WAN_IP NGINX_WAN_GW LXC_TEMPLATE
+
+# 2. Спокойно присваиваем значения без замечаний от ShellCheck
+LLM_NAME="$(yaml_get '.llm_vm.name')"
+LLM_IP="$(yaml_get '.llm_vm.ip')"
+LLM_PREFIX="$(yaml_get '.llm_vm.prefix')"
+LLM_MEMORY_MB="$(yaml_get '.llm_vm.memory_mb')"
+LLM_CORES="$(yaml_get '.llm_vm.cores')"
+LLM_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.system_disk_gb')")"
+LLM_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.data_disk_gb')")"
+MONITORING_VMID="$(yaml_get '.monitoring_vm.vmid')"
+MONITORING_NAME="$(yaml_get '.monitoring_vm.name')"
+MONITORING_IP="$(yaml_get '.monitoring_vm.ip')"
+MONITORING_PREFIX="$(yaml_get '.monitoring_vm.prefix')"
+MONITORING_MEMORY_MB="$(yaml_get '.monitoring_vm.memory_mb')"
+MONITORING_CORES="$(yaml_get '.monitoring_vm.cores')"
+MONITORING_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.system_disk_gb')")"
+MONITORING_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.data_disk_gb')")"
+INTERNAL_BRIDGE="$(yaml_get '.network.internal_bridge')"
+INTERNAL_GATEWAY="$(yaml_get '.network.internal_gateway')"
+DNS_SERVER="$(yaml_get '.network.dns_server')"
+INTERNAL_CIDR="$(yaml_get '.network.internal_cidr')"
+INTERNAL_SUBNET="$(yaml_get '.network.internal_subnet')"
+WAN_BRIDGE="$(yaml_get '.network.wan_bridge')"
+TEMPLATE_VMID="$(yaml_get '.template.vmid')"
+TEMPLATE_STORAGE="$(yaml_get '.template.storage')"
+LLM_STORAGE="$(yaml_get '.storage.llm')"
+MONITORING_STORAGE="$(yaml_get '.storage.monitoring')"
+GUEST_USER="$(yaml_get '.guest.user')"
+SSH_OPTS="$(yaml_get '.guest.ssh_opts')"
+GPU_PCI_ADDR="$(yaml_get '.llm_vm.gpu_pci_addr')"
+GPU_PASSTHROUGH="$(yaml_get '.features.gpu_passthrough')"
+FIREWALL_ENABLED="$(yaml_get '.features.firewall_enabled')"
+LOGGING_ENABLED="$(yaml_get '.features.logging_enabled')"
+AUDIT_ENABLED="$(yaml_get '.features.audit_enabled')"
+PROXMOX_HOST="$(yaml_get '.proxmox.host')"
+PROXMOX_USER="$(yaml_get '.proxmox.user')"
+NGINX_CTID="$(yaml_get '.nginx_proxy.ctid')"
+NGINX_HOSTNAME="$(yaml_get '.nginx_proxy.hostname')"
+NGINX_STORAGE="$(yaml_get '.nginx_proxy.storage')"
+NGINX_DISK_GB="$(yaml_get '.nginx_proxy.disk_gb')"
+NGINX_MEMORY_MB="$(yaml_get '.nginx_proxy.memory_mb')"
+NGINX_CORES="$(yaml_get '.nginx_proxy.cores')"
+NGINX_WAN_IP="$(yaml_get '.nginx_proxy.wan_ip')"
+NGINX_WAN_GW="$(yaml_get '.nginx_proxy.wan_gw')"
+LXC_TEMPLATE="$(yaml_get '.nginx_proxy.lxc_template')"
     # Валидируем сетевые настройки
     validate_network_config
     audit_log "Loaded YAML config"

@@ -343,7 +343,9 @@ MIT
 - ✅ Dry‑run и force флаги
 
 ---
-
+Сеть: контейнер теперь на INTERNAL_BRIDGE (vmbr1) с IP 10.10.10.70 — интернет через NAT хоста, без конфликта IP.
+Новая функция setup_dnat: настраивает на Proxmox хосте проброс портов 77.50.132.85:PORT → 10.10.10.70:PORT через iptables PREROUTING + MASQUERADE, сохраняет правила в /etc/iptables/rules.v4 и создаёт /etc/rc.local для восстановления после перезагрузки.
+fix_locale: убирает warning setlocale перед установкой пакетов.
 **Статус:** Production‑Ready (после завершения тестов)
 
 **Версия:** 2.0.0 (Refactored)
