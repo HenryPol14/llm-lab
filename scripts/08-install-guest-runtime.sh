@@ -46,7 +46,7 @@ if ! docker compose version >/dev/null 2>&1; then
   fi
 fi
 
-echo "Docker compose variant verified: $(docker compose version)"
+echo "Docker Compose verified: $(docker compose version)"
 EOF
 }
 

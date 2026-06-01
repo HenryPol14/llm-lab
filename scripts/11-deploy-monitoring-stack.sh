@@ -39,6 +39,7 @@ if docker compose version >/dev/null 2>&1; then
 fi
 
 echo "Installing Docker Compose v2..."
+sudo apt-get update -qq
 sudo apt-get install -y docker-compose-v2
 echo "Docker Compose installed: $(docker compose version)"
 EOF
