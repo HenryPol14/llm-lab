@@ -48,6 +48,18 @@ monitoring_vm:
   system_disk_gb: 40
   data_disk_gb: 100
 
+# секция для nginx LXC контейнера
+nginx_proxy:
+  ctid: 130
+  hostname: "nginx-proxy"
+  storage: "local-lvm"
+  disk_gb: 8
+  memory_mb: 512
+  cores: 1
+  wan_ip: "77.50.132.85/24"   # ← публичный IP/prefix Proxmox хоста
+  wan_gw: "77.50.132.1"       # ← шлюз провайдера (уточните)
+  lxc_template: "local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
+
 guest:
   user: "ubuntu"
   ssh_opts: "-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30"
