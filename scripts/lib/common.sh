@@ -490,6 +490,17 @@ load_yaml_config() {
     export FIREWALL_ENABLED="$(yaml_get '.features.firewall_enabled')"
     export LOGGING_ENABLED="$(yaml_get '.features.logging_enabled')"
     export AUDIT_ENABLED="$(yaml_get '.features.audit_enabled')"
+    export PROXMOX_HOST="$(yaml_get '.proxmox.host')"
+    export PROXMOX_USER="$(yaml_get '.proxmox.user')"
+    export NGINX_CTID="$(yaml_get '.nginx_proxy.ctid')"
+    export NGINX_HOSTNAME="$(yaml_get '.nginx_proxy.hostname')"
+    export NGINX_STORAGE="$(yaml_get '.nginx_proxy.storage')"
+    export NGINX_DISK_GB="$(yaml_get '.nginx_proxy.disk_gb')"
+    export NGINX_MEMORY_MB="$(yaml_get '.nginx_proxy.memory_mb')"
+    export NGINX_CORES="$(yaml_get '.nginx_proxy.cores')"
+    export NGINX_WAN_IP="$(yaml_get '.nginx_proxy.wan_ip')"
+    export NGINX_WAN_GW="$(yaml_get '.nginx_proxy.wan_gw')"
+    export LXC_TEMPLATE="$(yaml_get '.nginx_proxy.lxc_template')"
     # Валидируем сетевые настройки
     validate_network_config
     audit_log "Loaded YAML config"
