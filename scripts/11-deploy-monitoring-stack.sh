@@ -16,7 +16,7 @@ mark_step "Deploying monitoring stack to ${TARGET}"
 wait_for_ssh "$TARGET" 240
 
 render_prometheus_config() {
-  local target_dir="$1"   # принимаем путь снаружи
+  local target_dir="$1"
   info "Rendering Prometheus config for LLM target ${LLM_IP:-10.10.10.50} and Monitoring target ${MONITORING_IP:-10.10.10.60}" >&2
   cp -R "${PROJECT_ROOT}/docker/monitoring/." "$target_dir/"
   mkdir -p "$target_dir/prometheus"
@@ -52,7 +52,7 @@ validate_prometheus_config() {
   guest_ssh "$TARGET" 'bash -s' <<'EOF'
 set -Eeuo pipefail
 cd /opt/monitoring-stack
-if docker compose ps -q | grep -q prometheus; then
+if docker compose ps --quiet | grep -q prometheus; then
   echo "Testing Prometheus config..."
   sudo docker compose exec -T prometheus promtool check config /etc/prometheus/prometheus.yml || {
     echo "Prometheus config is invalid"
@@ -116,5 +116,9 @@ render_prometheus_config "$TMP_DIR"
 setup_remote_directory
 check_existing_containers || info "No existing containers, performing initial deployment"
 transfer_stack "$TMP_DIR"
+validate_prometheus_config
+deploy_stack
+verify_deployment
+print_access_info
 
 audit_log "Monitoring stack deployed to ${TARGET}"
