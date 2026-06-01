@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Описание: Деплой мониторингового стека (Prometheus, Grafana) в VM.
-# Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
-load_config                                           # загружаем конфигурацию проекта
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
 
-TARGET="${1:-${MONITORING_IP:-${LLM_IP:-}}}"       # IP целевой VM для мониторинга
+TARGET="${1:-${MONITORING_IP:-${LLM_IP:-}}}"
 if [[ -z "$TARGET" ]]; then
   die "Target IP required"
 fi
@@ -30,6 +28,42 @@ setup_remote_directory() {
   guest_ssh "$TARGET" "sudo mkdir -p ${REMOTE_STACK} && sudo chown ${GUEST_USER}:${GUEST_USER} ${REMOTE_STACK}"
 }
 
+install_docker_compose() {
+  info "Checking Docker Compose on ${TARGET}"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+set -Eeuo pipefail
+if docker compose version >/dev/null 2>&1; then
+  echo "Docker Compose already installed: $(docker compose version)"
+  exit 0
+fi
+echo "Installing Docker Compose plugin..."
+sudo apt-get update -qq
+sudo apt-get install -y docker-compose-plugin
+echo "Docker Compose installed: $(docker compose version)"
+EOF
+}
+
+reboot_if_required() {
+  info "Checking if reboot is required on ${TARGET}"
+  local needs_reboot
+  needs_reboot="$(guest_ssh "$TARGET" 'bash -s' <<'EOF'
+if [ -f /var/run/reboot-required ]; then
+  cat /var/run/reboot-required.pkgs 2>/dev/null || true
+  echo "REBOOT_REQUIRED"
+fi
+EOF
+)"
+  if echo "$needs_reboot" | grep -q "REBOOT_REQUIRED"; then
+    info "Reboot required, rebooting ${TARGET}..."
+    guest_ssh "$TARGET" "sudo reboot" || true
+    sleep 15
+    wait_for_ssh "$TARGET" 120
+    info "VM ${TARGET} is back online"
+  else
+    info "No reboot required"
+  fi
+}
+
 transfer_stack() {
   info "Transferring docker compose stack"
   local tmp_dir="$1"
@@ -39,8 +73,8 @@ transfer_stack() {
 
 check_existing_containers() {
   local existing
-  existing="$(guest_ssh "$TARGET" "cd ${REMOTE_STACK} && docker compose ps --quiet")"
-  if [[ -n "$existing" ]]; then
+  existing="$(guest_ssh "$TARGET" "cd ${REMOTE_STACK} && docker compose ps 2>/dev/null")"
+  if echo "$existing" | grep -q "Up\|running"; then
     info "Existing containers found, will be updated"
     return 0
   fi
@@ -52,9 +86,9 @@ validate_prometheus_config() {
   guest_ssh "$TARGET" 'bash -s' <<'EOF'
 set -Eeuo pipefail
 cd /opt/monitoring-stack
-if docker compose ps --quiet | grep -q prometheus; then
+if docker compose ps 2>/dev/null | grep -q prometheus; then
   echo "Testing Prometheus config..."
-  sudo docker compose exec -T prometheus promtool check config /etc/prometheus/prometheus.yml || {
+  docker compose exec -T prometheus promtool check config /etc/prometheus/prometheus.yml || {
     echo "Prometheus config is invalid"
     exit 1
   }
@@ -67,7 +101,7 @@ EOF
 
 deploy_stack() {
   info "Deploying with Docker Compose"
-  guest_ssh "$TARGET" "cd ${REMOTE_STACK} && sudo docker compose up -d --remove-orphans"
+  guest_ssh "$TARGET" "cd ${REMOTE_STACK} && docker compose up -d --remove-orphans"
 }
 
 verify_deployment() {
@@ -77,11 +111,11 @@ set -Eeuo pipefail
 cd /opt/monitoring-stack
 
 echo "Container status:"
-sudo docker compose ps
+docker compose ps
 
 echo ""
 echo "Checking for running containers..."
-RUNNING=$(sudo docker compose ps --services --filter "status=running" | wc -l)
+RUNNING=$(docker compose ps 2>/dev/null | grep -c " running\|Up " || true)
 if [[ $RUNNING -eq 0 ]]; then
   echo "No containers are running!"
   exit 1
@@ -114,6 +148,8 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 render_prometheus_config "$TMP_DIR"
 setup_remote_directory
+install_docker_compose
+reboot_if_required
 check_existing_containers || info "No existing containers, performing initial deployment"
 transfer_stack "$TMP_DIR"
 validate_prometheus_config
