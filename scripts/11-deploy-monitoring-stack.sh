@@ -16,17 +16,14 @@ mark_step "Deploying monitoring stack to ${TARGET}"
 wait_for_ssh "$TARGET" 240
 
 render_prometheus_config() {
-  info "Rendering Prometheus config for LLM target ${LLM_IP:-10.10.10.50} and Monitoring target ${MONITORING_IP:-10.10.10.60}"
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "$tmp_dir"' EXIT
-  cp -R "${PROJECT_ROOT}/docker/monitoring/." "$tmp_dir/"
-  mkdir -p "$tmp_dir/prometheus"
+  local target_dir="$1"   # принимаем путь снаружи
+  info "Rendering Prometheus config for LLM target ${LLM_IP:-10.10.10.50} and Monitoring target ${MONITORING_IP:-10.10.10.60}" >&2
+  cp -R "${PROJECT_ROOT}/docker/monitoring/." "$target_dir/"
+  mkdir -p "$target_dir/prometheus"
   sed \
     -e "s/{{LLM_IP}}/${LLM_IP:-10.10.10.50}/g" \
     -e "s/{{MONITORING_IP}}/${MONITORING_IP:-10.10.10.60}/g" \
-    "${PROJECT_ROOT}/monitoring/prometheus/prometheus.yml.tpl" > "$tmp_dir/prometheus/prometheus.yml"
-  echo "$tmp_dir"
+    "${PROJECT_ROOT}/monitoring/prometheus/prometheus.yml.tpl" > "$target_dir/prometheus/prometheus.yml"
 }
 
 setup_remote_directory() {
@@ -42,7 +39,7 @@ transfer_stack() {
 
 check_existing_containers() {
   local existing
-  existing="$(guest_ssh "$TARGET" "cd ${REMOTE_STACK} && docker compose ps -q")"
+  existing="$(guest_ssh "$TARGET" "cd ${REMOTE_STACK} && docker compose ps --quiet")"
   if [[ -n "$existing" ]]; then
     info "Existing containers found, will be updated"
     return 0
@@ -112,13 +109,12 @@ print_access_info() {
   info "  - Grafana: http://${TARGET}:3000"
 }
 
-TMP_DIR=$(render_prometheus_config)
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+render_prometheus_config "$TMP_DIR"
 setup_remote_directory
 check_existing_containers || info "No existing containers, performing initial deployment"
 transfer_stack "$TMP_DIR"
-validate_prometheus_config
-deploy_stack
-verify_deployment
-print_access_info
 
 audit_log "Monitoring stack deployed to ${TARGET}"
