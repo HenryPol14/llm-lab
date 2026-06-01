@@ -37,14 +37,11 @@ local config_file="${tmp_dir}/prometheus/prometheus.yml"
 
 info "Validating generated Prometheus configuration"
 
-[[ -f "$config_file" ]] 
-|| die "Prometheus config not found: $config_file"
+[[ -f "$config_file" ]] || die "Prometheus config not found: $config_file"
 
-grep -q "${LLM_IP}" "$config_file" 
-|| die "LLM IP was not rendered into Prometheus config"
+grep -q "${LLM_IP}" "$config_file" || die "LLM IP was not rendered into Prometheus config"
 
-grep -q "${MONITORING_IP}" "$config_file" 
-|| die "Monitoring IP was not rendered into Prometheus config"
+grep -q "${MONITORING_IP}" "$config_file" || die "Monitoring IP was not rendered into Prometheus config"
 
 info "Prometheus configuration validated"
 }
@@ -227,8 +224,7 @@ reboot_if_required
 
 grant_docker_access
 
-check_existing_containers 
-|| info "No existing containers found"
+check_existing_containers || info "No existing containers found"
 
 transfer_stack "$TMP_DIR"
 
