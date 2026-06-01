@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-require_root
+# Описание: Настраивает сетевые мосты и правила фаервола на хосте.
+# Комментарий добавлен автоматически — дополните при необходимости.
+NFTABLES_DIR="${NFTABLES_DIR:-/etc/nftables.d}"
+NFTABLES_CONF="${NFTABLES_CONF:-/etc/nftables.conf}"
 
-mark_step "Configuring network and firewall with whitelist rules"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
+require_root                                          # проверяем права root
+
+mark_step "Configuring network and firewall with whitelist rules"  # фиксируем шаг в журнале
 
 require_cmd ip
 require_cmd nft
 
 setup_internal_bridge() {
   info "Setting up internal bridge ${INTERNAL_BRIDGE}"
-  mkdir -p /etc/network/interfaces.d
+  mkdir -p /etc/network/interfaces.d                             # создаем каталог для дополнительных сетевых конфигураций
   cat >/etc/network/interfaces.d/llm-lab.cfg <<EOF
 auto ${INTERNAL_BRIDGE}
 iface ${INTERNAL_BRIDGE} inet static
@@ -37,11 +42,11 @@ EOF
 
 enable_ip_forwarding() {
   info "Enabling IP forwarding"
-  mkdir -p /etc/sysctl.d
+  mkdir -p /etc/sysctl.d                                       # создаем директорию для системных параметров
   cat >/etc/sysctl.d/99-llm-lab-forwarding.conf <<EOF
 net.ipv4.ip_forward=1
 EOF
-  sysctl --system >/dev/null
+  sysctl --system >/dev/null                                   # применяем изменения сразу
 }
 
 create_firewall_whitelist() {
@@ -51,59 +56,19 @@ create_firewall_whitelist() {
   fi
 
   info "Creating firewall whitelist rules"
-  mkdir -p /etc/nftables.d
+  mkdir -p "$NFTABLES_DIR"
 
-  cat >/etc/nftables.d/llm-lab.nft <<EOF
-table inet llm_lab {
-  chain postrouting {
-    type nat hook postrouting priority srcnat; policy accept;
-    
-    # Allow only specific services to internet
-    ip saddr ${LLM_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
-    ip saddr ${LLM_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
-    
-    ip saddr ${MONITORING_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
-    ip saddr ${MONITORING_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
-    
-    # Deny all other outbound
-    ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" drop
-  }
+  nftables_whitelist_config >"$NFTABLES_DIR/llm-lab.nft"
 
-  chain forward {
-    type filter hook forward priority 0; policy drop;
-    
-    # LLM VM services - inbound
-    ip daddr ${LLM_IP} tcp dport { 3000, 11434 } accept
-    
-    # Monitoring VM services - inbound
-    ip daddr ${MONITORING_IP} tcp dport { 3000, 9090 } accept
-    
-    # Allow established connections
-    ct state established,related accept
-    
-    # Drop inter-VM communication
-    ip saddr ${INTERNAL_SUBNET} ip daddr ${INTERNAL_SUBNET} drop
-  }
-
-  chain input {
-    type filter hook input priority 0; policy accept;
-  }
-
-  chain output {
-    type filter hook output priority 0; policy accept;
-  }
-}
-EOF
-
-  if ! grep -q 'include "/etc/nftables.d/\*.nft"' /etc/nftables.conf; then
-    printf '\ninclude "/etc/nftables.d/*.nft"\n' >> /etc/nftables.conf
+  if ! grep -q "include \"$NFTABLES_DIR/*.nft\"" "$NFTABLES_CONF"; then
+    printf '\ninclude "%s/*.nft"\n' "$NFTABLES_DIR" >> "$NFTABLES_CONF"
   fi
 }
 
 apply_firewall() {
   info "Applying firewall rules"
   systemctl enable --now nftables
-  nft -f /etc/nftables.conf
+  nft -f "$NFTABLES_CONF"
 
   info "Current nftables rules:"
   nft list ruleset

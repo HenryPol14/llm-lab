@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
+# Описание: Оркестратор запуска всех шагов по подготовке хоста и VM (последовательность скриптов).
+# Комментарий добавлен автоматически — дополните при необходимости.
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # директория скриптов
 
 "${SCRIPT_DIR}/01-install-proxmox-tools.sh"
 "${SCRIPT_DIR}/02-enable-iommu.sh"

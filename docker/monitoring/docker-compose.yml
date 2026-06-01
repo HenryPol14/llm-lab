@@ -6,7 +6,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - /mnt/monitoring-data/prometheus:/prometheus
+      - /mnt/data/prometheus:/prometheus
       - ./prometheus:/etc/prometheus:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -16,7 +16,7 @@ services:
       - '--web.enable-lifecycle'
       - '--storage.tsdb.retention.time=30d'
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      test: ["CMD", "curl--spider", "-q", "http://localhost:9090/-/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -45,7 +45,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - /mnt/monitoring-data/grafana:/var/lib/grafana
+      - /mnt/data/grafana:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
       GF_SECURITY_ADMIN_USER: admin
@@ -57,7 +57,7 @@ services:
       prometheus:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/login"]
+      test: ["CMD", "curl", "--spider", "-q", "http://localhost:3000/login"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -86,13 +86,13 @@ services:
     ports:
       - "9093:9093"
     volumes:
-      - /mnt/monitoring-data/alertmanager:/alertmanager
+      - /mnt/data/alertmanager:/alertmanager
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
       - '--web.external-url=http://localhost:9093'
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9093/-/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -127,7 +127,7 @@ services:
     volumes:
       - /:/host:ro,rslave
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9100/metrics"]
+      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9100/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3

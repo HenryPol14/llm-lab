@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-require_root
+# Описание: Выполняет аудит сетевых настроек и правил (nftables, маршруты и др.).
+# Комментарий добавлен автоматически — дополните при необходимости.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
+require_root                                          # требуем права root
 
 WAN_BRIDGE="${WAN_BRIDGE:-vmbr0}"
 INTERNAL_BRIDGE="${INTERNAL_BRIDGE:-vmbr1}"
@@ -23,7 +25,7 @@ info "Forwarding"
 sysctl net.ipv4.ip_forward
 
 info "NAT"
-nft list ruleset || true
+nft list ruleset || true                                  # показываем текущие правила nftables
 if nft list ruleset 2>/dev/null | grep -q "masquerade"; then
   info "NAT masquerade is present"
 else

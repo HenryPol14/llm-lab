@@ -24,7 +24,7 @@
 
 **Производительность:**
 - Docker storage overlay2 с log‑rotation
-- CPU 内存 ядра ядер резервов для контейнеров
+- CPU 4 ядра LLM 2 ядра резерв для контейнеров
 - Отдельный data диск для LLM моделей и мониторинга данных
 
 ## 🏗️ Архитектура
@@ -38,11 +38,11 @@ Proxmox Host (Ubuntu)
 VM 110: llm-server
 ├─ Docker: Ollama + OpenWebUI + Monitoring exporters
 ├─ GPU: Optional PCI passthrough
-└─ Mounts: /mnt/ai-data/ollama, /mnt/ai-data/models, /mnt/ai-data/docker
+└─ Mounts: /mnt/data/ollama, /mnt/data/models, /mnt/data/docker
 
 VM 120: monitoring-vm
 ├─ Docker: Prometheus + Grafana + Alertmanager
-└─ Mounts: /mnt/monitoring-data/prometheus, /mnt/monitoring-data/grafana
+└─ Mounts: /mnt/data/prometheus, /mnt/data/grafana
 ```
 
 ## 🚀 Быстрый старт
@@ -343,7 +343,9 @@ MIT
 - ✅ Dry‑run и force флаги
 
 ---
-
+Сеть: контейнер теперь на INTERNAL_BRIDGE (vmbr1) с IP 10.10.10.70 — интернет через NAT хоста, без конфликта IP.
+Новая функция setup_dnat: настраивает на Proxmox хосте проброс портов 77.50.132.85:PORT → 10.10.10.70:PORT через iptables PREROUTING + MASQUERADE, сохраняет правила в /etc/iptables/rules.v4 и создаёт /etc/rc.local для восстановления после перезагрузки.
+fix_locale: убирает warning setlocale перед установкой пакетов.
 **Статус:** Production‑Ready (после завершения тестов)
 
 **Версия:** 2.0.0 (Refactored)

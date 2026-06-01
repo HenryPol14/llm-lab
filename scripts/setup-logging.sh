@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-require_root
+# Описание: Настраивает аудит и логирование для проекта (logrotate и т.д.).
+# Комментарий добавлен автоматически — дополните при необходимости.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
+load_config                                           # загружаем конфигурацию проекта
+require_root                                          # проверяем root
 
-mark_step "Configuring audit logging system"
+mark_step "Configuring audit logging system"  # этап настройки логирования
 
 setup_audit_log_directory() {
   info "Creating audit log directory: $AUDIT_LOG_DIR"
-  mkdir -p "$AUDIT_LOG_DIR"
+  mkdir -p "$AUDIT_LOG_DIR"                             # создаем директорию для логов
   chmod 750 "$AUDIT_LOG_DIR"
 }
 
@@ -53,11 +55,12 @@ AUDIT_LOG_DIR=/var/log/llm-lab
 ENABLE_AUDIT_LOG=true
 ENABLE_SYSLOG=false
 EOF
-  info "Environment variables configured"
+  info "Environment variables configured"  # сохраняем параметры логирования в конфиге
 }
 
 create_initial_log_file() {
-  local log_file="$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
+  local log_file
+  log_file="$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
   touch "$log_file"
   chmod 640 "$log_file"
   info "Created initial log file: $log_file"

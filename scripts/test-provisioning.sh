@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+# Описание: Скрипт для тестирования процесса provision (quick/full тесты).
+# Комментарий добавлен автоматически — дополните при необходимости.
+set -Eeuo pipefail  # безопасный режим bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 load_config
 
-mark_step "Testing llm-lab provisioning with idempotency checks"
+mark_step "Testing llm-lab provisioning with idempotency checks"  # логируем начало тестов
 
 require_root
 require_cmd qm
+
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+info() { log "INFO: $*"; }
+warn() { log "WARN: $*" >&2; }
+die() { log "ERROR: $*" >&2; exit 1; }
 
 TEST_MODE="${1:-quick}"
 case "$TEST_MODE" in
@@ -19,10 +26,6 @@ case "$TEST_MODE" in
     ;;
 esac
 
-log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
-info() { log "INFO: $*"; }
-warn() { log "WARN: $*" >&2; }
-die() { log "ERROR: $*" >&2; exit 1; }
 
 test_results=()
 test_passed=0
@@ -72,6 +75,12 @@ test_config_validity() {
   return 0
 }
 
+test_config_regression() {
+  require_cmd bash
+  require_cmd yq
+  "${SCRIPT_DIR}/test-config-regressions.sh"
+}
+
 test_proxmox_storage() {
   for storage in "$TEMPLATE_STORAGE" "$LLM_STORAGE" "$MONITORING_STORAGE"; do
     require_pve_storage "$storage" || return 1
@@ -107,8 +116,6 @@ test_vm_idempotency() {
     local detected_storage
     detected_storage="$(qm config "$vmid" | awk -F'[: ,]+' '/^scsi0:/ {print $2}' | cut -d, -f1 | cut -d: -f1)"
     if [[ -n "$detected_storage" ]]; then
-      local expected_storage
-      expected_storage="${vmid} == ${LLM_VMID} && echo $LLM_STORAGE || echo $MONITORING_STORAGE"
       info "VM ${vmid} storage: $detected_storage"
       return 0
     fi
@@ -178,6 +185,7 @@ case "$TEST_MODE" in
     run_test "Script syntax" test_script_syntax
     run_test "Common library" test_common_library
     run_test "Config validity" test_config_validity
+    run_test "Config regression" test_config_regression
     run_test "Proxmox storage" test_proxmox_storage
     run_test "Network bridge" test_network_bridge
     ;;
@@ -185,6 +193,7 @@ case "$TEST_MODE" in
     run_test "Script syntax" test_script_syntax
     run_test "Common library" test_common_library
     run_test "Config validity" test_config_validity
+    run_test "Config regression" test_config_regression
     run_test "Proxmox storage" test_proxmox_storage
     run_test "Template exists" test_template_exists
     run_test "Network bridge" test_network_bridge
