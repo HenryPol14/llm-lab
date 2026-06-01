@@ -32,13 +32,14 @@ install_docker_compose() {
   info "Checking Docker Compose on ${TARGET}"
   guest_ssh "$TARGET" 'bash -s' <<'EOF'
 set -Eeuo pipefail
+
 if docker compose version >/dev/null 2>&1; then
   echo "Docker Compose already installed: $(docker compose version)"
   exit 0
 fi
-echo "Installing Docker Compose plugin..."
-sudo apt-get update -qq
-sudo apt-get install -y docker-compose-plugin
+
+echo "Installing Docker Compose v2..."
+sudo apt-get install -y docker-compose-v2
 echo "Docker Compose installed: $(docker compose version)"
 EOF
 }
