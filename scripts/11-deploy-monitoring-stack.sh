@@ -164,4 +164,4 @@ deploy_stack
 verify_deployment
 print_access_info
 grant_docker_access
-audit_log "Monitoring stack deployed to ${TARGET}"
+audit_log "Monitoring stack deployed to ${TARGET}
