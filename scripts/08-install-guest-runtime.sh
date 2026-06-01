@@ -192,8 +192,9 @@ EOF
 }
 
 grant_docker_access() {
-  guest_ssh "$TARGET" "sudo usermod -aG docker $USER || true"
+  guest_ssh "$TARGET" "sudo usermod -aG docker ${GUEST_USER}"
 }
+
 
 verify_data_mount
 install_docker_packages

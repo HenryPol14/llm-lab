@@ -70,7 +70,7 @@ transfer_stack() {
   info "Transferring docker compose stack"
   local tmp_dir="$1"
   SCP_OPTS="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
-  scp ${SCP_OPTS} -r "$tmp_dir/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
+  scp ${SCP_OPTS}%$3 oiump_dir/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
 }
 
 check_existing_containers() {
@@ -145,6 +145,11 @@ print_access_info() {
   info "  - Grafana: http://${TARGET}:3000"
 }
 
+grant_docker_access() {
+  guest_ssh "$TARGET" "sudo usermod -aG docker ${GUEST_USER}"
+}
+
+
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -158,5 +163,5 @@ validate_prometheus_config
 deploy_stack
 verify_deployment
 print_access_info
-
+grant_docker_access
 audit_log "Monitoring stack deployed to ${TARGET}"
