@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Описание: Настраивает аудит и логирование для проекта (logrotate и т.д.).
 # Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
@@ -71,7 +72,7 @@ display_audit_status() {
   info "  - Log directory: $AUDIT_LOG_DIR"
   info "  - Audit enabled: ${ENABLE_AUDIT_LOG:-true}"
   if [[ -d "$AUDIT_LOG_DIR" ]]; then
-    info "  - Log files: $(ls -1 "$AUDIT_LOG_DIR" | wc -l)"
+    info "  - Log files: $(find "$AUDIT_LOG_DIR" -maxdepth 1 -type f | wc -l)"
   fi
 }
 

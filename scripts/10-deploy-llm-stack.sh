@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Описание: Деплой стека LLM (Ollama, OpenWebUI, monitoring exporters)
 # в гостевую VM с автоматической загрузкой моделей.
 
@@ -24,7 +25,7 @@ ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
 setup_remote_directory() {
   # Создаем директорию для LLM стека на удаленной машине
-  guest_ssh "$TARGET" "sudo mkdir -p ${REMOTE_STACK} && sudo chown ${GUEST_USER}:${GUEST_USER} ${REMOTE_STACK}"
+  guest_ssh "$TARGET" "sudo mkdir -p \"${REMOTE_STACK}\" && sudo chown \"${GUEST_USER}:${GUEST_USER}\" \"${REMOTE_STACK}\""
 }
 
 transfer_stack() {
@@ -32,13 +33,13 @@ transfer_stack() {
   # Опции SCP для копирования файлов
   SCP_OPTS="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
   # Копируем docker compose файлы на удаленную машину
-  scp ${SCP_OPTS} -r "${PROJECT_ROOT}/docker/llm/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
+  scp ${SCP_OPTS} -r "${PROJECT_ROOT}/docker/llm/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"  # shellcheck disable=SC2086
 }
 
 check_existing_containers() {
   local existing
   # Проверяем есть ли уже запущенные контейнеры
-  existing="$(guest_ssh "$TARGET" "cd ${REMOTE_STACK} && docker compose ps -q")"
+  existing="$(guest_ssh "$TARGET" "cd \"${REMOTE_STACK}\" && docker compose ps -q")"
   if [[ -n "$existing" ]]; then
     info "Existing containers found, will be updated"
     return 0
@@ -49,7 +50,7 @@ check_existing_containers() {
 deploy_stack() {
   info "Deploying with Docker Compose"
   # Запускаем контейнеры через docker compose
-  guest_ssh "$TARGET" "cd ${REMOTE_STACK} && sudo docker compose up -d --remove-orphans"
+  guest_ssh "$TARGET" "cd \"${REMOTE_STACK}\" && sudo docker compose up -d --remove-orphans"
 }
 
 wait_for_ollama() {
@@ -105,7 +106,7 @@ pull_models() {
   for model in "${models[@]}"; do
     info "Pulling model: ${model}"
     # Загружаем модель через Docker exec (может занять несколько минут)
-    guest_ssh "$TARGET" "sudo docker exec ollama ollama pull ${model}" ||       warn "Failed to pull ${model}, skipping"
+    guest_ssh "$TARGET" "sudo docker exec ollama ollama pull \"${model}\"" ||       warn "Failed to pull ${model}, skipping"
   done
 
   # Выводим список установленных моделей

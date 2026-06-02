@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Описание: Создаёт LXC контейнер с nginx reverse proxy на внутреннем бридже.
 # DNAT и firewall настраиваются скриптом 14-setup-nft-rules.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"

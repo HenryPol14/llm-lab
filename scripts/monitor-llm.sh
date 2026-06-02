@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Описание: Скрипт для мониторинга статуса LLM VM и сервисов.
 # Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции

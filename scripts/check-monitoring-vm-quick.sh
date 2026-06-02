@@ -10,29 +10,29 @@ echo "VMID: $VMID"
 echo "Monitoring IP: $MONITORING_IP"
 echo "Guest user: $GUEST_USER"
 
-echo "\n# Статус VM"
-echo "qm status $VMID"
+printf '\n# Статус VM\n'
+echo "qm status \"$VMID\""
 
-echo "\n# Конфигурация VM"
-echo "qm config $VMID | grep -E '^(name|memory|cores|cpu|balloon|numa|agent|scsi|net|ciuser|ipconfig0):'"
+printf '\n# Конфигурация VM\n'
+echo "qm config \"$VMID\" | grep -E '^(name|memory|cores|cpu|balloon|numa|agent|scsi|net|ciuser|ipconfig0):'"
 
-echo "\n# Системный диск"
-echo "qm config $VMID | grep '^scsi0:'"
+printf '\n# Системный диск\n'
+echo "qm config \"$VMID\" | grep '^scsi0:'"
 
-echo "\n# Диск данных"
-echo "qm config $VMID | grep '^scsi1:'"
+printf '\n# Диск данных\n'
+echo "qm config \"$VMID\" | grep '^scsi1:'"
 
-echo "\n# IP внутри VM"
-echo "qm guest exec $VMID -- ip -4 addr show"
+printf '\n# IP внутри VM\n'
+echo "qm guest exec \"$VMID\" -- ip -4 addr show"
 
-echo "\n# Содержимое /mnt/data"
-echo "qm guest exec $VMID -- ls -lah /mnt/data"
+printf '\n# Содержимое /mnt/data\n'
+echo "qm guest exec \"$VMID\" -- ls -lah /mnt/data"
 
-echo "\n# Запись fstab"
-echo "qm guest exec $VMID -- grep '/mnt/data' /etc/fstab"
+printf '\n# Запись fstab\n'
+echo "qm guest exec \"$VMID\" -- grep '/mnt/data' /etc/fstab"
 
-echo "\n# Проверка пользователя"
-echo "qm guest exec $VMID -- id $GUEST_USER"
+printf '\n# Проверка пользователя\n'
+echo "qm guest exec \"$VMID\" -- id \"$GUEST_USER\""
 
-echo "\n# SSH доступ"
-echo "ssh -o ConnectTimeout=5 $GUEST_USER@$MONITORING_IP 'echo SSH OK'"
+printf '\n# SSH доступ\n'
+echo "ssh -o ConnectTimeout=5 \"${GUEST_USER}@${MONITORING_IP}\" 'echo SSH OK'"

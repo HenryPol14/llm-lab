@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Описание: Выполняет аудит сетевых настроек и правил (nftables, маршруты и др.).
 # Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
@@ -19,7 +20,11 @@ bridge link || true
 
 info "Routing"
 ip route
-ip route | grep -q '^default' && info "Default route present" || warn "Default route missing"
+if ip route | grep -q '^default'; then
+  info "Default route present"
+else
+  warn "Default route missing"
+fi
 
 info "Forwarding"
 sysctl net.ipv4.ip_forward
@@ -33,8 +38,16 @@ else
 fi
 
 info "Connectivity"
-ping -c 2 1.1.1.1 >/dev/null 2>&1 && info "Internet ping OK" || warn "Internet ping failed"
-ping -c 2 github.com >/dev/null 2>&1 && info "DNS OK" || warn "DNS failed"
+if ping -c 2 1.1.1.1 >/dev/null 2>&1; then
+  info "Internet ping OK"
+else
+  warn "Internet ping failed"
+fi
+if ping -c 2 github.com >/dev/null 2>&1; then
+  info "DNS OK"
+else
+  warn "DNS failed"
+fi
 
 info "VM network configs"
 if command -v qm >/dev/null 2>&1; then

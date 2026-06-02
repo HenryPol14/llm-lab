@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Скрипт для верификации всех компонентов, созданных скриптом 06-create-llm-vm.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"

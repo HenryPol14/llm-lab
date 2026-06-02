@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Описание: Настраивает nftables — NAT, DNAT, forward для llm-lab.
 # Заменяет дублированные и конкурирующие таблицы единым чистым ruleset.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
@@ -40,18 +41,18 @@ table ip llm_lab_nat {
     type nat hook prerouting priority dstnat; policy accept;
 
     # DNAT: публичный IP → nginx proxy (10.10.10.70)
-    iifname "${WAN_BRIDGE}" tcp dport 3000  dnat to ${NGINX_IP}:3000
-    iifname "${WAN_BRIDGE}" tcp dport 8080  dnat to ${NGINX_IP}:8080
-    iifname "${WAN_BRIDGE}" tcp dport 9090  dnat to ${NGINX_IP}:9090
-    iifname "${WAN_BRIDGE}" tcp dport 9093  dnat to ${NGINX_IP}:9093
-    iifname "${WAN_BRIDGE}" tcp dport 11434 dnat to ${NGINX_IP}:11434
+    iifname "${WAN_BRIDGE}" tcp dport 3000  dnat to "${NGINX_IP}:3000"
+    iifname "${WAN_BRIDGE}" tcp dport 8080  dnat to "${NGINX_IP}:8080"
+    iifname "${WAN_BRIDGE}" tcp dport 9090  dnat to "${NGINX_IP}:9090"
+    iifname "${WAN_BRIDGE}" tcp dport 9093  dnat to "${NGINX_IP}:9093"
+    iifname "${WAN_BRIDGE}" tcp dport 11434 dnat to "${NGINX_IP}:11434"
   }
 
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
 
     # Masquerade для всей внутренней подсети
-    ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" masquerade
+    ip saddr "${INTERNAL_SUBNET}" oifname "${WAN_BRIDGE}" masquerade
   }
 }
 
@@ -64,22 +65,22 @@ table inet llm_lab_filter {
     ct state established,related accept
 
     # Внутренняя подсеть → интернет (через masquerade)
-    ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" accept
+    ip saddr "${INTERNAL_SUBNET}" oifname "${WAN_BRIDGE}" accept
 
     # nginx proxy → LLM VM
-    ip saddr ${NGINX_IP} ip daddr ${LLM_IP} tcp dport { 3000, 11434 } accept
+    ip saddr "${NGINX_IP}" ip daddr "${LLM_IP}" tcp dport { 3000, 11434 } accept
 
     # nginx proxy → Monitoring VM
-    ip saddr ${NGINX_IP} ip daddr ${MONITORING_IP} tcp dport { 3000, 9090, 9093, 9100 } accept
+    ip saddr "${NGINX_IP}" ip daddr "${MONITORING_IP}" tcp dport { 3000, 9090, 9093, 9100 } accept
 
     # DNAT forwarding: входящий трафик к nginx
-    ip daddr ${NGINX_IP} tcp dport { 3000, 8080, 9090, 9093, 11434 } accept
+    ip daddr "${NGINX_IP}" tcp dport { 3000, 8080, 9090, 9093, 11434 } accept
 
     # Prometheus scraping: monitoring → llm node-exporter и gpu-exporter
-    ip saddr ${MONITORING_IP} ip daddr ${LLM_IP} tcp dport { 9100, 9400 } accept
+    ip saddr "${MONITORING_IP}" ip daddr "${LLM_IP}" tcp dport { 9100, 9400 } accept
 
     # Запрет трафика между VM (кроме разрешённого выше)
-    ip saddr ${INTERNAL_SUBNET} ip daddr ${INTERNAL_SUBNET} drop
+    ip saddr "${INTERNAL_SUBNET}" ip daddr "${INTERNAL_SUBNET}" drop
   }
 
   chain input {

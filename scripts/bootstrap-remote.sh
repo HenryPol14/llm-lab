@@ -27,7 +27,7 @@ command -v ssh >/dev/null 2>&1 || { echo "ssh not found" >&2; exit 1; }
 command -v scp >/dev/null 2>&1 || { echo "scp not found" >&2; exit 1; }
 
 echo "Preparing ${PROXMOX_USER}@${PROXMOX_HOST}:${REMOTE_DIR}"
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086,SC2029
 ssh ${SSH_OPTS} "${PROXMOX_USER}@${PROXMOX_HOST}" "mkdir -p '${REMOTE_DIR}'"  # создаем директорию на удалённом хосте
 
 echo "Uploading project files"
@@ -41,6 +41,6 @@ scp ${SSH_OPTS} -r \
   "${PROXMOX_USER}@${PROXMOX_HOST}:${REMOTE_DIR}/"  # копируем файлы проекта на удалённый Proxmox
 
 echo "Running deployment on Proxmox"
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086,SC2029
 ssh ${SSH_OPTS} "${PROXMOX_USER}@${PROXMOX_HOST}" "cd '${REMOTE_DIR}' && chmod +x scripts/*.sh scripts/lib/*.sh && ./scripts/run-all.sh"
 

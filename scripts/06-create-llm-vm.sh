@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # shellcheck disable=SC1078,SC1079,SC2016,SC2026
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции и утилиты
 load_config                                           # загружаем конфигурацию проекта

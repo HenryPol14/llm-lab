@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 TARGET="${1:-${MONITORING_IP:-${LLM_IP:-}}}"
@@ -49,7 +50,7 @@ validate_prometheus_files() {
 
 setup_remote_directory() {
   guest_ssh "$TARGET" \
-    "sudo mkdir -p ${REMOTE_STACK} && sudo chown ${GUEST_USER}:${GUEST_USER} ${REMOTE_STACK}"
+    "sudo mkdir -p \"${REMOTE_STACK}\" && sudo chown \"${GUEST_USER}:${GUEST_USER}\" \"${REMOTE_STACK}\""
 }
 
 install_docker_compose() {
@@ -93,7 +94,7 @@ EOF
 
 grant_docker_access() {
   guest_ssh "$TARGET" \
-    "sudo usermod -aG docker ${GUEST_USER}"
+    "sudo usermod -aG docker \"${GUEST_USER}\""
 }
 
 transfer_stack() {
@@ -102,7 +103,7 @@ transfer_stack() {
   info "Transferring monitoring stack"
   scp -r ${opts} \
     "${tmp_dir}/." \
-    "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
+    "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"  # shellcheck disable=SC2086
 }
 
 check_existing_containers() {
@@ -120,7 +121,7 @@ deploy_stack() {
   info "Deploying monitoring stack"
   guest_ssh "$TARGET" "
 set -Eeuo pipefail
-cd ${REMOTE_STACK}
+cd \"${REMOTE_STACK}\"
 sudo docker compose pull || true
 sudo docker compose up -d --remove-orphans
 "

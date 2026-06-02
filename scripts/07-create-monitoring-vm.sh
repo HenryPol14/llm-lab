@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
 load_config                                           # загружаем конфигурацию проекта
 require_root                                          # проверяем права root

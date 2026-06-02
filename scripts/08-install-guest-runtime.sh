@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Описание: Устанавливает runtime (Docker/компоненты) внутри гостевой VM.
 # Комментарий добавлен автоматически — дополните при необходимости.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
@@ -192,7 +193,7 @@ EOF
 }
 
 grant_docker_access() {
-  guest_ssh "$TARGET" "sudo usermod -aG docker ${GUEST_USER}"
+  guest_ssh "$TARGET" "sudo usermod -aG docker \"${GUEST_USER}\""
 }
 
 
