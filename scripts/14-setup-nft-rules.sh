@@ -15,7 +15,8 @@ WAN_BRIDGE="${WAN_BRIDGE:-vmbr0}"
 mark_step "Configuring nftables for llm-lab"
 
 backup_ruleset() {
-  local backup="/etc/nftables-backup-$(date +%Y%m%d%H%M%S).conf"
+  local backup
+  backup="/etc/nftables-backup-$(date +%Y%m%d%H%M%S).conf"
   nft list ruleset > "$backup"
   info "Current ruleset backed up to ${backup}"
 }
@@ -23,7 +24,7 @@ backup_ruleset() {
 flush_lab_tables() {
   info "Removing old lab tables"
   for table in "inet llm_lab" "inet pve_lab" "ip nat"; do
-    nft delete table $table 2>/dev/null && info "Deleted table: $table" || true
+    nft delete table "$table" 2>/dev/null && info "Deleted table: $table" || true
   done
 }
 

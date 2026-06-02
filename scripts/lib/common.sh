@@ -563,14 +563,14 @@ guest_ssh() {
   shift
   # Опции SSH (по умолчанию: не проверять ключи хоста)
   local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
-  local cmd=("ssh" ${opts} "${GUEST_USER:-ubuntu}@${host}" "$@")
+  local cmd=("ssh" "$opts" "${GUEST_USER:-ubuntu}@${host}" "$@")
   # Если включен режим сухого запуска, логируем команду вместо выполнения
   if is_dry_run; then
     info "[DRY RUN] Would run: ${cmd[*]}"
     return 0
   else
     audit_log "SSH to ${host}: $*"
-    ssh ${opts} "${GUEST_USER:-ubuntu}@${host}" "$@"
+    ssh "$opts" "${GUEST_USER:-ubuntu}@${host}" "$@"
   fi
 }
 
