@@ -15,8 +15,9 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
       - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.allow-overlapping-blocks=true'
     healthcheck:
-      test: ["CMD", "curl--spider", "-q", "http://localhost:9090/-/healthy"]
+      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9090/-/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
