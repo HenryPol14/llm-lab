@@ -121,7 +121,11 @@ deploy_stack() {
   guest_ssh "$TARGET" "
 set -Eeuo pipefail
 cd ${REMOTE_STACK}
-sudo docker compose down --remove-orphans || true
+EXISTING=\$(sudo docker compose ps -q 2>/dev/null | wc -l || true)
+if [ \"\$EXISTING\" -gt 0 ]; then
+  info 'Monitoring stack already running. Skipping deployment.'
+  exit 0
+fi
 sudo docker compose pull || true
 sudo docker compose up -d
 "
