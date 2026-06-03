@@ -177,7 +177,11 @@ mount -a
 mountpoint -q "$MOUNT"
 findmnt "$MOUNT"
 mkdir -p "$MOUNT/prometheus" "$MOUNT/grafana" "$MOUNT/alertmanager"
-chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
+# Prometheus и alertmanager работают от nobody (65534)
+chown -R 65534:65534 "$MOUNT/prometheus"
+chown -R 65534:65534 "$MOUNT/alertmanager"
+# Grafana работает от uid 472
+chown -R 472:472 "$MOUNT/grafana"
 df -h "$MOUNT"
 REMOTE
 }
