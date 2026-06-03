@@ -15,7 +15,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # директори
 "${SCRIPT_DIR}/08-install-guest-runtime.sh" "${LLM_IP:-}"
 "${SCRIPT_DIR}/09-install-nvidia-toolkit.sh" "${LLM_IP:-}"
 "${SCRIPT_DIR}/08-install-guest-runtime.sh" "${MONITORING_IP:-}"
-"${SCRIPT_DIR}/10-deploy-llm-stack.sh" "${LLM_IP:-}"
-"${SCRIPT_DIR}/13-deploy-monitoring-stack.sh" "${MONITORING_IP:-}"
-"${SCRIPT_DIR}/monitor-llm.sh"
+"${SCRIPT_DIR}/11-deploy-llm-stack.sh" "${LLM_IP:-}"
+"${SCRIPT_DIR}/check-llm-vm-quick.sh" "${LLM_IP:-}" "${MONITORING_IP:-}"
 

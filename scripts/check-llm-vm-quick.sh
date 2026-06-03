@@ -1,98 +1,92 @@
-#!/bin/bash
-# Быстрые команды для проверки компонентов LLM VM (10-create-llm-vm.sh)
-# Используйте эти команды для диагностики созданной VM
+#!/usr/bin/env bash
+# Быстрый справочник и мониторинг для LLM и Monitoring VM
 
 # ========== ПАРАМЕТРЫ ДЛЯ РЕДАКТИРОВАНИЯ ==========
-VMID=110                    # ID вашей LLM VM (по умолчанию)
-LLM_IP="10.10.10.50"       # IP адрес VM
-GUEST_USER="ubuntu"        # Пользователь гостя
+LLM_VMID="${LLM_VMID:-110}"
+MONITORING_VMID="${MONITORING_VMID:-120}"
+LLM_IP="${LLM_IP:-10.10.10.50}"
+MONITORING_IP="${MONITORING_IP:-10.10.10.60}"
+GUEST_USER="${GUEST_USER:-ubuntu}"
 
-# ========== КОМАНДЫ ПРОВЕРКИ НА ХОСТЕ PROXMOX ==========
+# ========== ФУНКЦИИ ==========
+check_http() {
+  local name="$1"
+  local url="$2"
+  if curl -fsS --max-time 5 "$url" >/dev/null; then
+    echo "  ✓ ${name}: OK (${url})"
+  else
+    echo "  ✗ ${name}: unavailable (${url})"
+  fi
+}
 
-echo "=== ИНФОРМАЦИЯ О VM ==="
-echo "Статус VM:"
-qm status $VMID
+echo "═══════════════════════════════════════════════════════════════"
+echo "Проверка LLM VM (VMID: ${LLM_VMID})"
+echo "═══════════════════════════════════════════════════════════════"
 
-echo -e "\nКонфигурация VM:"
-qm config $VMID | grep -E "^(name|memory|cores|cpu|balloon|numa|agent|scsi|net|ciuser|ipconfig|hostpci):"
+echo -e "\n# Статус VM"
+echo "qm status ${LLM_VMID}"
 
-echo -e "\nДиски VM:"
-qm config $VMID | grep -E "^(scsi|ide|virtio)"
+echo -e "\n# Конфигурация VM"
+echo "qm config ${LLM_VMID} | grep -E '^(name|memory|cores|cpu|balloon|numa|agent|scsi|net|ciuser|ipconfig0):'"
 
-echo -e "\nСетевые параметры VM:"
-qm config $VMID | grep "^net0:"
+echo -e "\n# Системный диск"
+echo "qm config ${LLM_VMID} | grep '^scsi0:'"
 
-echo -e "\nCloud-init параметры:"
-qm config $VMID | grep -E "^(ciuser|cipassword|ipconfig|nameserver|searchdomain)"
+echo -e "\n# Диск данных"
+echo "qm config ${LLM_VMID} | grep '^scsi1:'"
 
-echo -e "\nВсе параметры VM (полный список):"
-qm config $VMID
+echo -e "\n# IP внутри VM"
+echo "qm guest exec ${LLM_VMID} -- ip -4 addr show"
 
-# ========== КОМАНДЫ ПРОВЕРКИ ВНУТРИ VM (если VM запущена) ==========
+echo -e "\n# Содержимое /mnt/data"
+echo "qm guest exec ${LLM_VMID} -- ls -lah /mnt/data 2>/dev/null || true"
 
-echo -e "\n\n=== ПРОВЕРКА ВНУТРИ VM ==="
+echo -e "\n# Запись fstab"
+echo "qm guest exec ${LLM_VMID} -- grep '/mnt/data' /etc/fstab 2>/dev/null || true"
 
-echo "IP адрес VM:"
-qm guest exec $VMID -- ip -4 addr show
+echo -e "\n# Проверка пользователя"
+echo "qm guest exec ${LLM_VMID} -- id ${GUEST_USER}"
 
-echo -e "\nДиски и разделы:"
-qm guest exec $VMID -- lsblk
+echo -e "\n# SSH доступ"
+echo "ssh -o ConnectTimeout=5 ${GUEST_USER}@${LLM_IP} 'echo SSH OK'"
 
-echo -e "\nМонтирование дисков:"
-qm guest exec $VMID -- df -h
+echo -e "\n═══════════════════════════════════════════════════════════════"
+echo "Проверка Monitoring VM (VMID: ${MONITORING_VMID})"
+echo "═══════════════════════════════════════════════════════════════"
 
-echo -e "\nСодержимое /mnt/data:"
-qm guest exec $VMID -- ls -lah /mnt/data 2>/dev/null || echo "Директория не найдена"
+echo -e "\n# Статус VM"
+echo "qm status ${MONITORING_VMID}"
 
-echo -e "\nФайл /etc/fstab:"
-qm guest exec $VMID -- grep -E "^UUID" /etc/fstab 2>/dev/null || echo "UUID записей не найдено"
+echo -e "\n# Конфигурация VM"
+echo "qm config ${MONITORING_VMID} | grep -E '^(name|memory|cores|cpu|balloon|numa|agent|scsi|net|ciuser|ipconfig0):'"
 
-echo -e "\nПользователь $GUEST_USER:"
-qm guest exec $VMID -- id $GUEST_USER
+echo -e "\n# Системный диск"
+echo "qm config ${MONITORING_VMID} | grep '^scsi0:'"
 
-echo -e "\nПраво доступа на /mnt/data:"
-qm guest exec $VMID -- stat /mnt/data 2>/dev/null | grep -E "^.*(Uid|Gid|Access):"
+echo -e "\n# Диск данных"
+echo "qm config ${MONITORING_VMID} | grep '^scsi1:'"
 
-echo -e "\nCloud-init статус:"
-qm guest exec $VMID -- cloud-init status
+echo -e "\n# IP внутри VM"
+echo "qm guest exec ${MONITORING_VMID} -- ip -4 addr show"
 
-echo -e "\nКонфиг Docker (если установлен):"
-qm guest exec $VMID -- cat /etc/docker/daemon.json 2>/dev/null || echo "daemon.json не найден"
+echo -e "\n# Содержимое /mnt/data"
+echo "qm guest exec ${MONITORING_VMID} -- ls -lah /mnt/data"
 
-echo -e "\nДиск данных UUID в fstab:"
-qm guest exec $VMID -- grep "/mnt/data" /etc/fstab
+echo -e "\n# Запись fstab"
+echo "qm guest exec ${MONITORING_VMID} -- grep '/mnt/data' /etc/fstab"
 
-# ========== КОМАНДЫ SSH ДОСТУПА ==========
+echo -e "\n# SSH доступ"
+echo "ssh -o ConnectTimeout=5 ${GUEST_USER}@${MONITORING_IP} 'echo SSH OK'"
 
-echo -e "\n\n=== SSH ДОСТУП ==="
+echo -e "\n═══════════════════════════════════════════════════════════════"
+echo "HTTP-сервисы"
+echo "═══════════════════════════════════════════════════════════════"
 
-echo "Проверка SSH подключения:"
-ssh -o ConnectTimeout=5 -o BatchMode=yes $GUEST_USER@$LLM_IP "echo 'SSH работает'" && echo "✓ SSH успешно" || echo "✗ SSH не работает"
+check_http "Ollama API" "http://${LLM_IP}:11434/api/tags"
+check_http "Open WebUI" "http://${LLM_IP}:3000"
+check_http "Prometheus" "http://${MONITORING_IP}:9090/-/ready"
+check_http "Grafana" "http://${MONITORING_IP}:3000/api/health"
 
-echo -e "\nПодключение к VM:"
-echo "ssh $GUEST_USER@$LLM_IP"
-
-# ========== БЫСТРЫЕ ОДНОИМЕННЫЕ КОМАНДЫ ==========
-
-echo -e "\n\n=== БЫСТРЫЕ КОМАНДЫ ДЛЯ СКОПИРОВАНИЯ ==="
-echo ""
-echo "# Общая информация о VM"
-echo "qm config $VMID"
-echo ""
-echo "# Статус VM"
-echo "qm status $VMID"
-echo ""
-echo "# Диски VM"
-echo "qm config $VMID | grep scsi"
-echo ""
-echo "# IP VM"
-echo "qm guest exec $VMID -- hostname -I"
-echo ""
-echo "# Проверка /mnt/data"
-echo "qm guest exec $VMID -- df -h /mnt/data"
-echo ""
-echo "# Проверка docker root"
-echo "qm guest exec $VMID -- docker info | grep 'Docker Root Dir'"
-echo ""
-echo "# SSH подключение"
-echo "ssh $GUEST_USER@$LLM_IP"
+echo -e "\n═══════════════════════════════════════════════════════════════"
+echo "Справка: Запустите команды ниже для диагностики"
+echo "═══════════════════════════════════════════════════════════════"
