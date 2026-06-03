@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Скрипт для верификации всех компонентов, созданных скриптом 06-create-llm-vm.sh
+# Скрипт для верификации всех компонентов, созданных скриптом 10-create-llm-vm.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config

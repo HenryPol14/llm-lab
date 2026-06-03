@@ -53,7 +53,7 @@ DEBUG=1 bash -x scripts/08-install-guest-runtime.sh 10.10.10.50
 DEBUG=1 bash -x scripts/09-install-nvidia-toolkit.sh 10.10.10.50
 DEBUG=1 bash -x scripts/08-install-guest-runtime.sh 10.10.10.60
 DEBUG=1 bash -x scripts/10-deploy-llm-stack.sh 10.10.10.50
-DEBUG=1 bash -x scripts/11-deploy-monitoring-stack.sh 10.10.10.60
+DEBUG=1 bash -x scripts/13-deploy-monitoring-stack.sh 10.10.10.60
 8. Финальная проверка
 
 bash scripts/monitor-llm.sh

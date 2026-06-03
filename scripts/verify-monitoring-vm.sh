@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Скрипт для верификации всех компонентов, созданных скриптом 07-create-monitoring-vm.sh
+# Скрипт для верификации всех компонентов, созданных скриптом 11-create-monitoring-vm.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config

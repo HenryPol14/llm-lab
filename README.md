@@ -97,12 +97,12 @@ cd /root/llm-lab
 | `03-configure-network.sh` | Network bridge + firewall | Да |
 | `04-download-cloud-image.sh` | Download Ubuntu cloud image | Да |
 | `05-create-cloudinit-template.sh` | Создание VM template | Да |
-| `06-create-llm-vm.sh` | Создание/обновление LLM VM | Да |
-| `07-create-monitoring-vm.sh` | Создание/обновление monitoring VM | Да |
+| `10-create-llm-vm.sh` | Создание/обновление LLM VM | Да |
+| `11-create-monitoring-vm.sh` | Создание/обновление monitoring VM | Да |
 | `08-install-guest-runtime.sh` | Установка Docker runtime | Нет* |
 | `09-install-nvidia-toolkit.sh` | NVIDIA Container Toolkit | Нет* |
 | `10-deploy-llm-stack.sh` | Deploy Ollama + OpenWebUI | Нет* |
-| `11-deploy-monitoring-stack.sh` | Deploy Prometheus + Grafana | Нет* |
+| `13-deploy-monitoring-stack.sh` | Deploy Prometheus + Grafana | Нет* |
 | `setup-logging.sh` | Audit logging setup | Нет |
 | `test-provisioning.sh` | Идемпотентность тесты | Безопасный |
 | `monitor-llm.sh` | Статус и мониторинг | Безопасный |
@@ -201,7 +201,7 @@ FORCE_REBUILD=1 ./scripts/run-all.sh  # Пересоздает VM
 
 ```bash
 ./scripts/08-install-guest-runtime.sh ${MONITORING_IP}
-./scripts/11-deploy-monitoring-stack.sh ${MONITORING_IP}
+./scripts/13-deploy-monitoring-stack.sh ${MONITORING_IP}
 ```
 
 ### Обновление Infrastructure
@@ -210,7 +210,7 @@ FORCE_REBUILD=1 ./scripts/run-all.sh  # Пересоздает VM
 # Измените config/infra.yaml
 # Затем перезапустите конкретные скрипты
 ./scripts/03-configure-network.sh
-./scripts/06-create-llm-vm.sh
+./scripts/10-create-llm-vm.sh
 ```
 
 ## 📝 Конфигурация

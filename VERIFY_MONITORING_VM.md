@@ -1,6 +1,6 @@
-# Проверка Monitoring VM (07-create-monitoring-vm.sh)
+# Проверка Monitoring VM (11-create-monitoring-vm.sh)
 
-Этот документ содержит команды для верификации всех шагов, созданных скриптом `07-create-monitoring-vm.sh`.
+Этот документ содержит команды для верификации всех шагов, созданных скриптом `11-create-monitoring-vm.sh`.
 
 ## Переменные
 
