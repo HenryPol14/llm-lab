@@ -121,8 +121,9 @@ deploy_stack() {
   guest_ssh "$TARGET" "
 set -Eeuo pipefail
 cd ${REMOTE_STACK}
+sudo docker compose down --remove-orphans || true
 sudo docker compose pull || true
-sudo docker compose up -d --remove-orphans
+sudo docker compose up -d
 "
 }
 
