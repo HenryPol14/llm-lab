@@ -54,14 +54,8 @@ services:
 
     volumes:
       - /mnt/data/openwebui:/app/backend/data
-
     healthcheck:
-      test: ["CMD-SHELL", "curl --spider -q http://localhost:8080/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
+      disable: true
     logging:
       driver: json-file
       options:
@@ -89,14 +83,8 @@ services:
 
     volumes:
       - /:/host:ro,rslave
-
     healthcheck:
-      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9100/metrics"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
+      disable: true
     logging:
       driver: json-file
       options:
