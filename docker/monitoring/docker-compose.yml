@@ -3,6 +3,7 @@ services:
     image: prom/prometheus:latest
     container_name: prometheus
     restart: unless-stopped
+    user: "65534:65534"
     ports:
       - "9090:9090"
     volumes:
@@ -15,13 +16,13 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
       - '--storage.tsdb.retention.time=30d'
-      - '--storage.tsdb.allow-overlapping-blocks=true'
-    healthcheck:
-      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9090/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    # healthcheck отключён для диагностики
+    # healthcheck:
+    #   test: ["CMD", "curl", "--spider", "-q", "http://localhost:9090/-/healthy"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
     logging:
       driver: json-file
       options:
