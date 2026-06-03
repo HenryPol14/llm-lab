@@ -15,12 +15,6 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
       - '--storage.tsdb.retention.time=30d'
-    healthcheck:
-      test: ["CMD-SHELL", "timeout 5 bash -c 'echo >/dev/tcp/localhost/9090' 2>/dev/null"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
     logging:
       driver: json-file
       options:
@@ -53,15 +47,6 @@ services:
       GF_SECURITY_DISABLE_GRAVATAR: true
       GF_SERVER_ROOT_URL: http://localhost:3000
       GF_INSTALL_PLUGINS: ""
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "--spider", "-q", "http://localhost:3000/login"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
     logging:
       driver: json-file
       options:
@@ -90,14 +75,8 @@ services:
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
-      - '--web.external-url=http://localhost:9093'
-    healthcheck:
-      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9093/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    logging:
+       - '--web.external-url=http://localhost:9093'
+     logging:
       driver: json-file
       options:
         max-size: 50m
@@ -126,13 +105,7 @@ services:
       - "9100:9100"
     volumes:
       - /:/host:ro,rslave
-    healthcheck:
-      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9100/metrics"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    logging:
+     logging:
       driver: json-file
       options:
         max-size: 50m
