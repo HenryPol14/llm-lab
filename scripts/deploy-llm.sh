@@ -103,6 +103,7 @@ pull_models() {
   local models=(
     "qwen2.5:7b"
     "llama3.1:8b"
+    "mistral:7b"
   )
 
   for model in "${models[@]}"; do
