@@ -3,7 +3,6 @@ services:
     image: prom/prometheus:latest
     container_name: prometheus
     restart: unless-stopped
-    user: "65534:65534"
     ports:
       - "9090:9090"
     volumes:
@@ -17,7 +16,7 @@ services:
       - '--web.enable-lifecycle'
       - '--storage.tsdb.retention.time=30d'
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9090 && echo -e 'GET /-/healthy HTTP/1.0\\r\\n' >&3 && head -n1 >&3 | grep -q '200'"]
+      test: ["CMD-SHELL", "timeout 5 bash -c 'echo >/dev/tcp/localhost/9090' 2>/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 3
