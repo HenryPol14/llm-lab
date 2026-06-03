@@ -75,8 +75,8 @@ services:
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
-       - '--web.external-url=http://localhost:9093'
-     logging:
+      - '--web.external-url=http://localhost:9093'
+    logging:
       driver: json-file
       options:
         max-size: 50m
@@ -105,7 +105,7 @@ services:
       - "9100:9100"
     volumes:
       - /:/host:ro,rslave
-     logging:
+    logging:
       driver: json-file
       options:
         max-size: 50m
