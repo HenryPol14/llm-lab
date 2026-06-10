@@ -1,6 +1,6 @@
-# Проверка компонентов LLM VM (10-create-llm-vm.sh)
+# Проверка компонентов LLM VM (vm-create-llm-vm.sh)
 
-Этот документ содержит команды для верификации всех компонентов, которые должны быть созданы скриптом `10-create-llm-vm.sh`.
+Этот документ содержит команды для верификации всех компонентов, которые должны быть созданы скриптом `vm-create-llm-vm.sh`.
 
 ## Предварительные переменные
 
@@ -208,10 +208,10 @@ ssh $GUEST_USER@$LLM_IP "cat ~/.ssh/authorized_keys" 2>/dev/null | head -1
 
 ```bash
 # Автоматическая проверка всех компонентов
-scripts/verify-llm-vm.sh
+scripts/vm-verify-llm-vm.sh
 
 # Или быстрые команды
-scripts/check-llm-vm-quick.sh
+scripts/deployment-check-llm-vm-quick.sh
 ```
 
 ## 5. Список проверяемых компонентов

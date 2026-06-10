@@ -18,12 +18,12 @@
 
 **Безопасность:**
 - Firewall whitelist (только нужные порты)
-- Безопасность Docker контейнеров (read‑only, no-new-privileges)
+- Безопасность Docker контейнеров (read-only, no-new-privileges)
 - GPU passthrough с явной конфигурацией
-- SSH‑ключи без паролей
+- SSH-ключи без паролей
 
 **Производительность:**
-- Docker storage overlay2 с log‑rotation
+- Docker storage overlay2 с log-rotation
 - CPU 4 ядра LLM 2 ядра резерв для контейнеров
 - Отдельный data диск для LLM моделей и мониторинга данных
 
@@ -81,10 +81,10 @@ cd /root/llm-lab
 
 ```bash
 # Быстрая проверка
-./scripts/test-provisioning.sh quick
+./scripts/deployment-test-provisioning.sh quick
 
 # Полная проверка
-./scripts/test-provisioning.sh full
+./scripts/deployment-test-provisioning.sh full
 ```
 
 ## 🔧 Доступные скрипты
@@ -92,20 +92,21 @@ cd /root/llm-lab
 | Скрипт | Описание | Требует root |
 |--------|----------|--------------|
 | `run-all.sh` | Главный оркестратор | Да |
-| `01-install-proxmox-tools.sh` | Установка инструментов Proxmox | Да |
-| `02-enable-iommu.sh` | IOMMU/VFIO для GPU | Да |
-| `03-configure-network.sh` | Network bridge + firewall | Да |
-| `04-download-cloud-image.sh` | Download Ubuntu cloud image | Да |
-| `05-create-cloudinit-template.sh` | Создание VM template | Да |
-| `10-create-llm-vm.sh` | Создание/обновление LLM VM | Да |
-| `11-create-monitoring-vm.sh` | Создание/обновление monitoring VM | Да |
-| `08-install-guest-runtime.sh` | Установка Docker runtime | Нет* |
-| `09-install-nvidia-toolkit.sh` | NVIDIA Container Toolkit | Нет* |
-| `10-deploy-llm-stack.sh` | Deploy Ollama + OpenWebUI | Нет* |
-| `13-deploy-monitoring-stack.sh` | Deploy Prometheus + Grafana | Нет* |
-| `setup-logging.sh` | Audit logging setup | Нет |
-| `test-provisioning.sh` | Идемпотентность тесты | Безопасный |
-| `monitor-llm.sh` | Статус и мониторинг | Безопасный |
+| `infra-install-proxmox-tools.sh` | Установка инструментов Proxmox | Да |
+| `infra-enable-iommu.sh` | IOMMU/VFIO для GPU | Да |
+| `infra-configure-network.sh` | Network bridge + firewall | Да |
+| `vm-download-cloud-image.sh` | Download Ubuntu cloud image | Да |
+| `vm-create-cloudinit-template.sh` | Создание VM template | Да |
+| `vm-create-llm-vm.sh` | Создание/обновление LLM VM | Да |
+| `vm-create-monitoring-vm.sh` | Создание/обновление monitoring VM | Да |
+| `deployment-install-guest-runtime-llm.sh` | Установка Docker runtime (LLM) | Нет* |
+| `deployment-install-nvidia-toolkit-llm.sh` | NVIDIA Container Toolkit (LLM) | Нет* |
+| `deployment-deploy-monitoring-stack.sh` | Deploy Prometheus + Grafana | Нет* |
+| `proxy-deploy-nginx-proxy.sh` | Deploy nginx reverse proxy | Нет |
+| `vm-verify-llm-vm.sh` | Проверка LLM VM | Безопасный |
+| `vm-verify-monitoring-vm.sh` | Проверка Monitoring VM | Безопасный |
+| `deployment-check-llm-vm-quick.sh` | Быстрая проверка VM | Безопасный |
+| `infra-setup-logging.sh` | Audit logging setup | Нет |
 
 \* Спрашивает root пароль для VM
 
@@ -192,16 +193,15 @@ FORCE_REBUILD=1 ./scripts/run-all.sh  # Пересоздает VM
 ### Обновление LLM stack
 
 ```bash
-./scripts/08-install-guest-runtime.sh ${LLM_IP}
-./scripts/09-install-nvidia-toolkit.sh ${LLM_IP}
-./scripts/10-deploy-llm-stack.sh ${LLM_IP}
+./scripts/deployment-install-guest-runtime-llm.sh ${LLM_IP}
+./scripts/deployment-install-nvidia-toolkit-llm.sh ${LLM_IP}
+./scripts/deployment-deploy-monitoring-stack.sh ${LLM_IP}
 ```
 
 ### Обновление Monitoring stack
 
 ```bash
-./scripts/08-install-guest-runtime.sh ${MONITORING_IP}
-./scripts/13-deploy-monitoring-stack.sh ${MONITORING_IP}
+./scripts/deployment-install-guest-runtime-monitoring.sh ${MONITORING_IP}
 ```
 
 ### Обновление Infrastructure
@@ -209,8 +209,8 @@ FORCE_REBUILD=1 ./scripts/run-all.sh  # Пересоздает VM
 ```bash
 # Измените config/infra.yaml
 # Затем перезапустите конкретные скрипты
-./scripts/03-configure-network.sh
-./scripts/10-create-llm-vm.sh
+./scripts/infra-configure-network.sh
+./scripts/vm-create-llm-vm.sh
 ```
 
 ## 📝 Конфигурация

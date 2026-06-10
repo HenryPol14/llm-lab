@@ -3,18 +3,33 @@
 # Комментарий добавлен автоматически — дополните при необходимости.
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"  # директория скриптов
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-"${SCRIPT_DIR}/01-install-proxmox-tools.sh"
-"${SCRIPT_DIR}/02-enable-iommu.sh"
-"${SCRIPT_DIR}/03-configure-network.sh"
-"${SCRIPT_DIR}/04-download-cloud-image.sh"
-"${SCRIPT_DIR}/05-create-cloudinit-template.sh"
-"${SCRIPT_DIR}/10-create-llm-vm.sh"
-"${SCRIPT_DIR}/11-create-monitoring-vm.sh"
-"${SCRIPT_DIR}/08-install-guest-runtime.sh" "${LLM_IP:-}"
-"${SCRIPT_DIR}/09-install-nvidia-toolkit.sh" "${LLM_IP:-}"
-"${SCRIPT_DIR}/08-install-guest-runtime.sh" "${MONITORING_IP:-}"
-"${SCRIPT_DIR}/11-deploy-llm-stack.sh" "${LLM_IP:-}"
-"${SCRIPT_DIR}/check-llm-vm-quick.sh" "${LLM_IP:-}" "${MONITORING_IP:-}"
+# Bootstrap
+"${SCRIPT_DIR}/00-bootstrap-remote.sh"
 
+# Infrastructure
+"${SCRIPT_DIR}/infra-install-proxmox-tools.sh"
+"${SCRIPT_DIR}/infra-enable-iommu.sh"
+"${SCRIPT_DIR}/infra-configure-network.sh"
+
+# VM creation
+"${SCRIPT_DIR}/vm-download-cloud-image.sh"
+"${SCRIPT_DIR}/vm-create-cloudinit-template.sh"
+"${SCRIPT_DIR}/vm-create-llm-vm.sh"
+"${SCRIPT_DIR}/vm-create-monitoring-vm.sh"
+
+# Deployment LLM
+"${SCRIPT_DIR}/deployment-install-guest-runtime-llm.sh" "${LLM_IP:-}"
+"${SCRIPT_DIR}/deployment-install-nvidia-toolkit-llm.sh" "${LLM_IP:-}"
+"${SCRIPT_DIR}/deployment-deploy-monitoring-stack.sh" "${LLM_IP:-}"
+
+# Verification
+"${SCRIPT_DIR}/deployment-check-llm-vm-quick.sh" "${LLM_IP:-}" "${MONITORING_IP:-}"
+
+# Deployment Monitoring
+"${SCRIPT_DIR}/deployment-install-guest-runtime-monitoring.sh" "${MONITORING_IP:-}"
+
+# Proxy
+"${SCRIPT_DIR}/proxy-deploy-nginx-proxy.sh"
+"${SCRIPT_DIR}/infra-setup-nft-rules.sh"
