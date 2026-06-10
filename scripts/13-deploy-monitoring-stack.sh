@@ -49,7 +49,7 @@ validate_prometheus_files() {
 
 setup_remote_directory() {
   guest_ssh "$TARGET" \
-    "sudo mkdir -p ${REMOTE_STACK} && sudo chown ${GUEST_USER}:${GUEST_USER} ${REMOTE_STACK}"
+    "sudo mkdir -p \"${REMOTE_STACK}\" && sudo chown \"${GUEST_USER}:${GUEST_USER}\" \"${REMOTE_STACK}\""
 }
 
 install_docker_compose() {
@@ -93,7 +93,7 @@ EOF
 
 grant_docker_access() {
   guest_ssh "$TARGET" \
-    "sudo usermod -aG docker ${GUEST_USER}"
+    "sudo usermod -aG docker \"${GUEST_USER}\""
 }
 
 transfer_stack() {
