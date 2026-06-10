@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
 # Описание: Скрипт для тестирования процесса provision (quick/full тесты).
 # Комментарий добавлен автоматически — дополните при необходимости.
 set -Eeuo pipefail  # безопасный режим bash
