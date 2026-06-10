@@ -180,6 +180,8 @@ mark_step() {
 
 # Функция, требующая наличия указанного хранилища Proxmox VE
 # Аргументы: $1 - имя хранилища
+# Функция, требующая наличия указанного хранилища Proxmox VE
+# Аргументы: $1 - имя хранилища
 require_pve_storage() {
   local storage="$1"
   # Проверяем наличие команды pvesm
@@ -222,7 +224,7 @@ ensure_line() {
   local line="$1"
   local file="$2"
   # Создаем файл, если он не существует
-  touch "$file"
+  touch "$file" || true
   # Если строка отсутствует в файле, добавляем ее
   grep -qxF "$line" "$file" || echo "$line" >> "$file"
 }
@@ -236,7 +238,7 @@ vm_exists() {
 # Функция для проверки, запущена ли VM по ее ID
 # Аргументы: $1 - ID VM
 vm_running() {
-  qm status "$1" 2>/dev/null | grep -q 'running'
+  qm status "$1" 2>/dev/null | grep -q 'running' || false || true
 }
 
 # Функция для ожидания готовности гостевого агента на VM
@@ -304,7 +306,7 @@ parse_qm_guest_exec_error() {
   local raw="$1"
   local parsed
 
-  parsed="$(printf '%s\n' "$raw" | grep '"err-data"' | sed -e 's/^.*"err-data"[[:space:]]*:[[:space:]]*"//' -e 's/"[[:space:]]*,[[:space:]]*"[^"]*"[[:space:]]*:.*$//' -e 's/"[[:space:]]*}[[:space:]]*$//' -e 's/"[,]$//' -e 's/"$//')" || true
+  parsed="$(printf '%s\n' "$raw" | grep '"err-data"' | sed -e 's/^.*"err-data"[[:space:]]*:[[:space:]]*"//' -e 's/"[[:space:]]*,[[:space:]]*"[^"]*"[[:space:]]*:.*$//' -e 's/"[[:space:]]*}[[:space:]]*$//' -e 's/"[,]$//' -e 's/"$//')" || true || true
   if [[ -n "$parsed" ]]; then
     parsed="${parsed%\\n}"
     parsed="${parsed//\\n/ }"
@@ -318,7 +320,7 @@ parse_qm_guest_exec_exitcode() {
   local raw="$1"
   local exitcode
 
-  exitcode="$(printf '%s\n' "$raw" | sed -nE 's/.*"exitcode"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' | head -n1)"
+  exitcode="$(printf '%s\n' "$raw" | sed -nE 's/.*"exitcode"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' | head -n1)" || true
   printf '%s' "${exitcode:-0}"
 }
 

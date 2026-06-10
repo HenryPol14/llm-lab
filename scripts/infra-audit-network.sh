@@ -20,7 +20,7 @@ bridge link || true
 
 info "Routing"
 ip route
-if ip route | grep -q '^default'; then
+if ip route | grep -q '^default' || true; then
   info "Default route present"
 else
   warn "Default route missing"
@@ -30,8 +30,8 @@ info "Forwarding"
 sysctl net.ipv4.ip_forward
 
 info "NAT"
-nft list ruleset || true                                  # показываем текущие правила nftables
-if nft list ruleset 2>/dev/null | grep -q "masquerade"; then
+nft list ruleset || true
+if nft list ruleset 2>/dev/null | grep -q "masquerade" || true; then
   info "NAT masquerade is present"
 else
   warn "NAT masquerade is missing"

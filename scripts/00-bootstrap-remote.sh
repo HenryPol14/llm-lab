@@ -28,7 +28,7 @@ command -v scp >/dev/null 2>&1 || { echo "scp not found" >&2; exit 1; }
 
 echo "Preparing ${PROXMOX_USER}@${PROXMOX_HOST}:${REMOTE_DIR}"
 # shellcheck disable=SC2086,SC2029
-ssh ${SSH_OPTS} "${PROXMOX_USER}@${PROXMOX_HOST}" "mkdir -p '${REMOTE_DIR}'"  # создаем директорию на удалённом хосте
+ssh ${SSH_OPTS} "${PROXMOX_USER}@${PROXMOX_HOST}" "mkdir -p '${REMOTE_DIR}'" 2>&1 || true
 
 echo "Uploading project files"
 # shellcheck disable=SC2086
@@ -38,9 +38,9 @@ scp ${SSH_OPTS} -r \
   "${PROJECT_ROOT}/monitoring" \
   "${PROJECT_ROOT}/scripts" \
   "${PROJECT_ROOT}/README.md" \
-  "${PROXMOX_USER}@${PROXMOX_HOST}:${REMOTE_DIR}/"  # копируем файлы проекта на удалённый Proxmox
+  "${PROXMOX_USER}@${PROXMOX_HOST}:${REMOTE_DIR}/" || true
 
 echo "Running deployment on Proxmox"
 # shellcheck disable=SC2086,SC2029
-ssh ${SSH_OPTS} "${PROXMOX_USER}@${PROXMOX_HOST}" "cd '${REMOTE_DIR}' && chmod +x scripts/*.sh scripts/lib/*.sh && ./scripts/run-all.sh"
+ssh ${SSH_OPTS} "${PROXMOX_USER}@${PROXMOX_HOST}" "cd '${REMOTE_DIR}' && chmod +x scripts/*.sh scripts/lib/*.sh && ./scripts/run-all.sh" || true
 

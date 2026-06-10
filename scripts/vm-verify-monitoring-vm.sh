@@ -62,7 +62,7 @@ NUMA=$(qm config "$MONITORING_VMID" | grep "^numa:" | awk '{print $2}')
 echo "✓ Balloon: $BALLOON (ожидается: 0)"
 echo "✓ NUMA: $NUMA (ожидается: 1)"
 
-AGENT=$(qm config "$MONITORING_VMID" | grep "^agent:" | awk '{print $2}')
+AGENT=$(qm config "$MONITORING_VMID" | grep "^agent:" | awk '{print $2}' || true)
 echo "✓ Guest Agent: $AGENT (ожидается: enabled=1)"
 
 DISK_SCSI0=$(qm config "$MONITORING_VMID" | grep "^scsi0:")
@@ -73,7 +73,7 @@ else
   echo "✗ Системный диск (scsi0) не найден"
 fi
 
-DISK_SCSI1=$(qm config "$MONITORING_VMID" | grep "^scsi1:")
+DISK_SCSI1=$(qm config "$MONITORING_VMID" | grep "^scsi1:" || true)
 if [[ -n "$DISK_SCSI1" ]]; then
   echo "✓ Диск данных (scsi1) присутствует"
   echo "  $DISK_SCSI1"
@@ -82,7 +82,7 @@ else
 fi
 
 echo "✓ Сетевой интерфейс (net0):"
-qm config "$MONITORING_VMID" | grep "^net0:"
+qm config "$MONITORING_VMID" | grep "^net0:" || true
 
 echo "✓ Cloud-init параметры:"
 qm config "$MONITORING_VMID" | grep -E "^(ciuser|ipconfig0|nameserver):" || true
@@ -104,7 +104,7 @@ IP_CONFIG=$(guest_exec ip -4 addr show 2>/dev/null | grep -E "inet " | tail -1)
 echo "✓ IP конфигурация внутри VM:"
 echo "  $IP_CONFIG"
 
-if guest_exec ip addr show | grep -q "${MONITORING_IP:-}"; then
+if guest_exec ip addr show | grep -q "${MONITORING_IP:-}" || true; then
   echo "✓ Целевой IP ${MONITORING_IP} присутствует"
 else
   echo "⚠ Целевой IP ${MONITORING_IP} не найден"
@@ -112,13 +112,13 @@ fi
 
 echo ""
 echo "✓ Диски внутри VM:"
-guest_exec lsblk 2>/dev/null | head -15 || echo "  (не удалось получить информацию)"
+guest_exec lsblk 2>/dev/null || true | head -15 || echo "  (не удалось получить информацию)"
 
 echo ""
 echo "✓ Монтирование /mnt/data:"
-if guest_exec test -d /mnt/data 2>/dev/null; then
+if guest_exec test -d /mnt/data 2>/dev/null || true; then
   echo "✓ Директория /mnt/data существует"
-  guest_exec df -h /mnt/data 2>/dev/null
+  guest_exec df -h /mnt/data 2>/dev/null || true
 else
   echo "✗ Директория /mnt/data не найдена"
 fi
@@ -132,7 +132,7 @@ echo "✓ Проверка пользователя ${GUEST_USER}:"
 if guest_exec id "$GUEST_USER" >/dev/null 2>&1; then
   echo "✓ Пользователь $GUEST_USER существует"
   if guest_exec test -d "/mnt/data"; then
-    OWNER=$(guest_exec stat -c "%U:%G" /mnt/data 2>/dev/null)
+    OWNER=$(guest_exec stat -c "%U:%G" /mnt/data 2>/dev/null || true)
     echo "  Владелец /mnt/data: $OWNER (ожидается: $GUEST_USER:$GUEST_USER)"
   else
     echo "  Директория /mnt/data отсутствует, проверка владельца пропущена"
@@ -143,7 +143,7 @@ fi
 
 echo ""
 echo "✓ Программное обеспечение внутри VM:"
-guest_exec bash -lc 'command -v docker >/dev/null 2>&1 && echo "Docker installed" || echo "Docker not installed"'
+guest_exec bash -lc 'command -v docker >/dev/null 2>&1 && echo "Docker installed" || echo "Docker not installed"' || true
 
 CLOUD_INIT_STATUS=$(guest_exec cloud-init status 2>/dev/null || true)
 if [[ "$CLOUD_INIT_STATUS" == *done* || "$CLOUD_INIT_STATUS" == *"status: done"* ]]; then

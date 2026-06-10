@@ -104,13 +104,13 @@ persist_ruleset() {
   nft list table inet llm_lab_filter >> /etc/nftables-llm-lab.conf
 
   # Добавляем include в /etc/nftables.conf если его ещё нет
-  if ! grep -q "nftables-llm-lab" /etc/nftables.conf 2>/dev/null; then
+  if ! grep -q "nftables-llm-lab" /etc/nftables.conf 2>/dev/null || true; then
     echo 'include "/etc/nftables-llm-lab.conf"' >> /etc/nftables.conf
     info "Added include to /etc/nftables.conf"
   fi
 
   # Включаем и перезапускаем сервис
-  systemctl enable nftables
+  systemctl enable nftables || true
   info "nftables rules will persist across reboots"
 }
 

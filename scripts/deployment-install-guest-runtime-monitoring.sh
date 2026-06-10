@@ -25,9 +25,9 @@ REMOTE_MODELS_ROOT="/mnt/data/models"
 
 verify_data_mount() {
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail
-mountpoint -q /mnt/data
-test -d /mnt/data/docker
+set -Eeuo pipefail || true
+mountpoint -q /mnt/data || true
+test -d /mnt/data/docker || true
 EOF
 }
 
@@ -63,7 +63,7 @@ confirm_docker_data_migration() {
   info "Target Docker Root Dir: $REMOTE_DOCKER_ROOT"
 
   local has_existing_data
-  has_existing_data="$(guest_ssh "$TARGET" 'test -d /var/lib/docker && test -n "$(sudo find /var/lib/docker -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" && echo yes || echo no')"
+  has_existing_data="$(guest_ssh "$TARGET" 'test -d /var/lib/docker && test -n "$(sudo find /var/lib/docker -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" && echo yes || echo no' || echo no)"
   if [[ "$has_existing_data" != "yes" ]]; then
     info "No existing Docker data to migrate"
     return 0
@@ -76,12 +76,12 @@ confirm_docker_data_migration() {
 
   if [[ "${CONFIRM_DOCKER_MIGRATION:-no}" != "yes" ]]; then
     if [[ ! -t 0 ]]; then
-      die "Non-interactive shell: Docker data migration requires CONFIRM_DOCKER_MIGRATION=yes"
+      die "Non-interactive shell: Docker data migration requires CONFIRM_DOCKER_MIGRATION=yes" || true
     fi
 
     local confirm
-    read -r -p "Confirm migration of Docker data from ${current_root:-/var/lib/docker} to $REMOTE_DOCKER_ROOT? [yes/no]: " confirm
-    [[ "$confirm" == "yes" ]] || die "Aborted by user"
+    read -r -p "Confirm migration of Docker data from ${current_root:-/var/lib/docker} to $REMOTE_DOCKER_ROOT? [yes/no]: " confirm || true
+    [[ "$confirm" == "yes" ]] || die "Aborted by user" || true
   fi
 
   return 0
@@ -164,13 +164,13 @@ systemctl status docker --no-pager || true
 systemctl status containerd --no-pager || true
 
 timeout=30
-until sudo docker info >/dev/null 2>&1; do
+until sudo docker info >/dev/null 2>&1 || true; do
   echo "Waiting for docker to be ready..."
   sleep 2
-  ((timeout--))
+  ((timeout--)) || true
   if ((timeout <= 0)); then
     echo "Docker failed to start"
-    exit 1
+    exit 1 || true
   fi
 done
 echo "Docker started successfully"

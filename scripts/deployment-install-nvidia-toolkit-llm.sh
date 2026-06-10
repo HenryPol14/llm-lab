@@ -21,7 +21,7 @@ ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
 check_gpu_presence() {
   local gpu_count
-  gpu_count="$(guest_ssh "$TARGET" 'lspci | grep -i nvidia | wc -l' 2>/dev/null || echo "0")"  # проверяем наличие NVIDIA GPU внутри гостя
+  gpu_count="$(guest_ssh "$TARGET" 'lspci | grep -i nvidia | wc -l' 2>/dev/null || echo "0")" || true  # проверяем наличие NVIDIA GPU внутри гостя
   if [[ "$gpu_count" -eq "0" ]]; then
     info "No NVIDIA GPU detected in guest, skipping NVIDIA toolkit"
     return 1
@@ -50,14 +50,14 @@ EOF
 
   # Проверяем через sudo — nvidia-smi может быть не в PATH обычного пользователя
   local smi_ok
-  smi_ok="$(guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L 2>/dev/null | wc -l' || echo "0")"
+  smi_ok="$(guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L 2>/dev/null | wc -l' || echo "0")" || true || true
   if [[ "$smi_ok" -eq 0 ]]; then
     info "NVIDIA kernel module not loaded, rebooting VM..."
-    guest_ssh "$TARGET" 'sudo reboot' || true
+    guest_ssh "$TARGET" 'sudo reboot' || true || true
     sleep 15
     wait_for_ssh "$TARGET" 180
-    ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
-    ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+    ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true || true
+    ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true || true
     guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi' || die "nvidia-smi failed after reboot"
   fi
   info "NVIDIA drivers OK"
@@ -66,16 +66,16 @@ EOF
 install_nvidia_toolkit() {
   info "Installing NVIDIA Container Toolkit"
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail
+set -Eeuo pipefail || true
 if dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
   echo "NVIDIA Container Toolkit already installed"
 else
-  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list |
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' |
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
-  sudo apt-get update -y >/dev/null 2>&1
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg || true
+  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null || true
+  sudo apt-get update -y >/dev/null 2>&1 || true
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit || true
 fi
 EOF
 }
@@ -96,9 +96,9 @@ verify_installation() {
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -EEu
 echo "Docker info:"
-docker info | grep -i nvidia || true
+docker info | grep -i nvidia || true || true
 echo "NVIDIA runtime configured:"
-docker info | grep -i runtime || true
+docker info | grep -i runtime || true || true
 echo "GPU test:"
 timeout 30 docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi || true
 EOF

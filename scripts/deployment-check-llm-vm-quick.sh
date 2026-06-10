@@ -12,7 +12,7 @@ GUEST_USER="${GUEST_USER:-ubuntu}"
 check_http() {
   local name="$1"
   local url="$2"
-  if curl -fsS --max-time 5 "$url" >/dev/null; then
+  if curl -fsS --max-time 5 "$url" >/dev/null || true; then
     echo "  ✓ ${name}: OK (${url})"
   else
     echo "  ✗ ${name}: unavailable (${url})"

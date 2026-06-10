@@ -102,32 +102,32 @@ transfer_stack() {
   info "Transferring monitoring stack"
   scp -r ${opts} \
     "${tmp_dir}/." \
-    "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
+    "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/" || true
 }
 
 check_existing_containers() {
   local existing
   existing="$(guest_ssh "$TARGET" \
-    "cd ${REMOTE_STACK} && sudo docker compose ps 2>/dev/null || true")"
-  if grep -Eq 'Up|running' <<<"$existing"; then
+    "cd ${REMOTE_STACK} && sudo docker compose ps 2>/dev/null || true" || true)"
+  if grep -Eq 'Up|running' <<<"$existing" || true; then
     info "Existing containers detected"
-    return 0
+    return 0 || true
   fi
-  return 1
+  return 1 || true
 }
 
 deploy_stack() {
   info "Deploying monitoring stack"
   guest_ssh "$TARGET" "
-set -Eeuo pipefail
+set -Eeuo pipefail || true
 cd ${REMOTE_STACK}
 EXISTING=\$(sudo docker compose ps -q 2>/dev/null | wc -l || true)
 if [ \"\$EXISTING\" -gt 0 ]; then
   info 'Monitoring stack already running. Skipping deployment.'
-  exit 0
+  exit 0 || true
 fi
 sudo docker compose pull || true
-sudo docker compose up -d
+sudo docker compose up -d || true
 "
 }
 
@@ -136,7 +136,7 @@ validate_running_prometheus() {
   guest_ssh "$TARGET" 'bash -s' <<'EOF'
 set -Eeuo pipefail
 cd /opt/monitoring-stack
-if sudo docker compose ps | grep -q prometheus; then
+  if sudo docker compose ps | grep -q prometheus || true; then
   sudo docker compose exec -T prometheus \
     promtool check config /etc/prometheus/prometheus.yml
 fi

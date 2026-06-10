@@ -93,9 +93,9 @@ gpu_passthrough_config_matches() {
 
   config="$(qm config "$LLM_VMID")" || return 1
 
-  grep -qxF "machine: q35" <<< "$config" &&
-    grep -qxF "vga: none" <<< "$config" &&
-    grep -qxF "hostpci0: ${expected_hostpci}" <<< "$config"
+grep -qxF "machine: q35" <<< "$config" &&
+  grep -qxF "vga: none" <<< "$config" &&
+  grep -qxF "hostpci0: ${expected_hostpci}" <<< "$config" || false
 }
 
 stop_vm_for_gpu_passthrough_change() {
@@ -276,7 +276,7 @@ fi
 # Ждём пока blkid увидит UUID — udev может запаздывать после mkfs
 UUID=""
 for _ in $(seq 1 15); do
-  UUID=$(blkid -s UUID -o value "$PART" 2>/dev/null || true)
+  UUID="$(blkid -s UUID -o value "$PART" 2>/dev/null || true)"
   [[ -n "$UUID" ]] && break
   sleep 1
 done

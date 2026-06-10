@@ -159,7 +159,7 @@ fi
 # Ждём пока blkid увидит UUID — udev может запаздывать после mkfs
 UUID=""
 for _ in $(seq 1 15); do
-  UUID=$(blkid -s UUID -o value "$PART" 2>/dev/null || true)
+  UUID="$(blkid -s UUID -o value "$PART" 2>/dev/null || true)"
   [[ -n "$UUID" ]] && break
   sleep 1
 done
