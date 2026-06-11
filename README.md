@@ -33,7 +33,7 @@
 Proxmox Host (Ubuntu)
 ├─ Network: vmbr0 (WAN) / vmbr1 (Internal 10.10.10.1/24)
 ├─ Storage: SSD-VMs / local-lvm
-└─ Services: nftables firewall (whitelist only)
+    └─ Services: nftables (NAT, DNAT, whitelist)
 
 VM 110: llm-server
 ├─ Docker: Ollama + OpenWebUI + Monitoring exporters
@@ -92,11 +92,12 @@ cd /root/llm-lab
 | Скрипт | Описание | Требует root |
 |--------|----------|--------------|
 | `run-all.sh` | Главный оркестратор | Да |
-| `infra-install-proxmox-tools.sh` | Установка инструментов Proxmox | Да |
+| `infra-install-proxmox-tools.sh` | Установка инструментов Proxmox (nftables) | Да |
 | `infra-enable-iommu.sh` | IOMMU/VFIO для GPU | Да |
 | `infra-configure-network.sh` | Network bridge + firewall | Да |
 | `vm-download-cloud-image.sh` | Download Ubuntu cloud image | Да |
 | `vm-create-cloudinit-template.sh` | Создание VM template | Да |
+| `infra-setup-nft-rules.sh` | NAT, DNAT, whitelist nftables | Да |
 | `vm-create-llm-vm.sh` | Создание/обновление LLM VM | Да |
 | `vm-create-monitoring-vm.sh` | Создание/обновление monitoring VM | Да |
 | `deployment-install-guest-runtime-llm.sh` | Установка Docker runtime (LLM) | Нет* |
@@ -122,10 +123,11 @@ cd /root/llm-lab
 ## 🔒 Безопасность
 
 **Firewall Whitelist:**
-- LLM VM → только порты 11434, 3000 inbound
-- Monitoring VM → только порты 9090, 3000 inbound
-- Интер‑VM трафик запрещен
-- Outbound → только DNS (53, 443) к Google/Cloudflare
+- nftables единый ruleset (`inet llm_lab_filter`)
+- LLM VM → порты 3000, 11434 inbound (через DNAT nginx → 10.10.10.70)
+- Monitoring VM → порты 3000, 9090, 9100, 9093 inbound
+- Интер VM трафик запрещен (кроме разрешенных скринингов)
+- Outbound NAT (masquerade) для интернет
 
 **Docker Security:**
 - `read_only: true` (где возможно)
@@ -204,16 +206,32 @@ FORCE_REBUILD=1 ./scripts/run-all.sh  # Пересоздает VM
 ./scripts/deployment-install-guest-runtime-monitoring.sh ${MONITORING_IP}
 ```
 
-### Обновление Infrastructure
+### Обновление Network Firewall (nftables)
 
 ```bash
-# Измените config/infra.yaml
-# Затем перезапустите конкретные скрипты
+./scripts/infra-setup-nft-rules.sh
 ./scripts/infra-configure-network.sh
-./scripts/vm-create-llm-vm.sh
 ```
 
 ## 📝 Конфигурация
+
+### Network (nftables)
+
+Используется **nftables** (без iptables) для всех сетевых функций:
+- **NAT:** `table ip llm_lab_nat` — masquerade для внутренней подсети
+- **DNAT:** входящий трафик → nginx proxy (10.10.10.70)
+- **Whitelist:** `table inet llm_lab_filter` — строгий фильтр запрета VM→VM
+
+**Порты DNAT (77.50.132.85 → 10.10.10.70):**
+| Порт | Сервис |
+|------|--------|
+| 3000 | Grafana |
+| 8080 | Open WebUI |
+| 9090 | Prometheus |
+| 9093 | Alertmanager |
+| 11434 | Ollama API |
+
+### Основные параметры (YAML)
 
 ### Основные параметры (YAML)
 
@@ -280,12 +298,14 @@ nvidia-smi
 
 **Firewall блокирует:**
 ```bash
-# Проверьте правила
+# Проверьте правила nftables
 nft list ruleset
-nft list table inet llm_lab
+nft list table inet llm_lab_filter
+nft list table ip llm_lab_nat
 
 # Временно отключите firewall (не production!)
 nft delete table inet llm_lab
+nft delete table ip llm_lab_nat
 ```
 
 ## 📚 Подробности
@@ -344,6 +364,7 @@ MIT
 
 ---
 **Статус:** Production‑Ready (v3.0.0)  
-**Сеть:** контейнер теперь на INTERNAL_BRIDGE (vmbr1) с IP 10.10.10.70 — интернет через NAT хоста, без конфликта IP.  
-**Новая функция:** setup_dnat настраивает на Proxmox хосте проброс портов 77.50.132.85:PORT → 10.10.10.70:PORT через iptables PREROUTING + MASQUERADE.  
+**Сеть:** контейнер на INTERNAL_BRIDGE (vmbr1) с IP 10.10.10.70 — интернет через NAT.  
+**Firewall:** nftables — единый ruleset для NAT, DNAT и whitelist (без iptables).  
+**DNAT:** 77.50.132.85:PORT → 10.10.10.70:PORT (Grafana/ OpenWebUI/ Prometheus/ Alertmanager/ Ollama API).  
 **fix_locale:** убирает warning setlocale перед установкой пакетов.
