@@ -5,10 +5,10 @@ ssh ai-off
 На Proxmox:
 
 cd /root
-git clone https://github.com/HenryPol14/llm-lab.git llm-lab
+git clone https://gitlab.com/henrynik/llm-lab.git llm-lab
 cd /root/llm-lab
-cp config/lab.env.example config/lab.env
-nano config/lab.env
+cp config/infra.yaml.example config/infra.yaml
+nano config/infra.yaml
 Проверьте там STORAGE, WAN_BRIDGE, INTERNAL_BRIDGE, IP VM и SSH_PUBLIC_KEY.
 
 3. Проверить базовую совместимость
