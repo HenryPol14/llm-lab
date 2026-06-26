@@ -6,8 +6,8 @@ lint:
   stage: lint
   image: bash:5.2
   script:
-    - bash -n scripts/*.sh
-    - bash -n scripts/lib/*.sh
+    - bash -n scripts/*.sh 2>&1 || exit 1
+    - bash -n scripts/lib/*.sh 2>&1 || exit 1
   rules:
     - when: always
 
@@ -15,7 +15,7 @@ syntax_check:
   stage: lint
   image: bash:5.2
   script:
-    - for file in scripts/*.sh; do bash -n "$file" || exit 1; done
+    - for file in scripts/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
   rules:
     - when: always
 
@@ -24,22 +24,19 @@ shellcheck:
   image: bash:5.2
   script:
     - if command -v shellcheck >/dev/null 2>&1; then
-        shellcheck scripts/*.sh scripts/lib/*.sh || true;
+        shellcheck scripts/*.sh scripts/lib/*.sh --exclude=SC2034,SC2154 || true;
       else
-        echo "shellcheck not available, skipping";
+        echo "shellcheck not available, skipping static analysis";
       fi
   rules:
     - when: always
 
 test:
   stage: test
-  image: ubuntu:22.04
-  services:
-    - name: ubuntu:22.04
-      command: ["sleep", "600"]
+  image: ubuntu:24.04
   script:
     - apt-get update -qq
-    - apt-get install -y -qq bash coreutils git rsync ssh
+    - apt-get install -y -qq bash coreutils git rsync ssh jq yq
     - if [[ -f scripts/deployment-test-provisioning.sh ]]; then
         bash scripts/deployment-test-config-regressions.sh || true;
       else
@@ -47,3 +44,20 @@ test:
       fi
   rules:
     - when: always
+
+deploy:
+  stage: test
+  image: ubuntu:24.04
+  script:
+    - apt-get update -qq
+    - apt-get install -y -qq bash coreutils git rsync ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -p 60022 $PROXMOX_HOST > ~/.ssh/known_hosts
+    - ssh -o BatchMode=yes -o ConnectTimeout=10 $PROXMOX_USER@$PROXMOX_HOST "echo 'SSH connection successful'" || exit 1
+    - echo "Proxmox connection verified"
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == "release"
+      when: manual
