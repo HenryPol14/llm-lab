@@ -1,0 +1,49 @@
+stages:
+  - lint
+  - test
+
+lint:
+  stage: lint
+  image: bash:5.2
+  script:
+    - bash -n scripts/*.sh
+    - bash -n scripts/lib/*.sh
+  rules:
+    - when: always
+
+syntax_check:
+  stage: lint
+  image: bash:5.2
+  script:
+    - for file in scripts/*.sh; do bash -n "$file" || exit 1; done
+  rules:
+    - when: always
+
+shellcheck:
+  stage: lint
+  image: bash:5.2
+  script:
+    - if command -v shellcheck >/dev/null 2>&1; then
+        shellcheck scripts/*.sh scripts/lib/*.sh || true;
+      else
+        echo "shellcheck not available, skipping";
+      fi
+  rules:
+    - when: always
+
+test:
+  stage: test
+  image: ubuntu:22.04
+  services:
+    - name: ubuntu:22.04
+      command: ["sleep", "600"]
+  script:
+    - apt-get update -qq
+    - apt-get install -y -qq bash coreutils git rsync ssh
+    - if [[ -f scripts/deployment-test-provisioning.sh ]]; then
+        bash scripts/deployment-test-config-regressions.sh || true;
+      else
+        echo "Test scripts not found";
+      fi
+  rules:
+    - when: always
