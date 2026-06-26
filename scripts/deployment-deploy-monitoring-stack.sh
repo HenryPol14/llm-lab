@@ -121,8 +121,7 @@ deploy_stack() {
   guest_ssh "$TARGET" "
 set -Eeuo pipefail || true
 cd ${REMOTE_STACK}
-EXISTING=\$(sudo docker compose ps -q 2>/dev/null | wc -l || true)
-if [ \"\$EXISTING\" -gt 0 ]; then
+if sudo docker compose ps -q 2>/dev/null | grep -q .; then
   info 'Monitoring stack already running. Skipping deployment.'
   exit 0 || true
 fi

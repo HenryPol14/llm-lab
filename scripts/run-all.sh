@@ -22,13 +22,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Deployment LLM
 "${SCRIPT_DIR}/deployment-install-guest-runtime-llm.sh" "${LLM_IP:-}"
 "${SCRIPT_DIR}/deployment-install-nvidia-toolkit-llm.sh" "${LLM_IP:-}"
-"${SCRIPT_DIR}/deployment-deploy-monitoring-stack.sh" "${LLM_IP:-}"
+"${SCRIPT_DIR}/deployment-deploy-llm-stack.sh" "${LLM_IP:-}"
 
 # Verification
 "${SCRIPT_DIR}/deployment-check-llm-vm-quick.sh" "${LLM_IP:-}" "${MONITORING_IP:-}"
 
 # Deployment Monitoring
 "${SCRIPT_DIR}/deployment-install-guest-runtime-monitoring.sh" "${MONITORING_IP:-}"
+"${SCRIPT_DIR}/deployment-deploy-monitoring-stack.sh" "${MONITORING_IP:-}"
 
 # Proxy
 "${SCRIPT_DIR}/proxy-deploy-nginx-proxy.sh"

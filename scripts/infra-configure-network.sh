@@ -90,10 +90,10 @@ verify_connectivity() {
     return 1
   fi
 
-  if iptables -t nat -L POSTROUTING -n | grep -q MASQUERADE; then
+  if nft list ruleset 2>/dev/null | grep -q "llm_lab_nat"; then
     info "NAT rules are active"
   else
-    warn "NAT rules not found"
+    warn "NAT rules not found (may be configured in separate ruleset)"
   fi
 }
 
