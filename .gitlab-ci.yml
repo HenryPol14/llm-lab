@@ -15,7 +15,10 @@ syntax_check:
   stage: lint
   image: bash:5.2
   script:
-    - for file in scripts/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
+    - |
+      for file in scripts/*.sh scripts/lib/*.sh; do
+        bash -n "$file" || exit 1
+      done
   rules:
     - when: always
 
@@ -50,10 +53,10 @@ deploy:
   image: ubuntu:24.04
   script:
     - apt-get update -qq
-    - apt-get install -y -qq bash coreutils git rsync ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - apt-get install -y -qq bash coreutils git rsync ssh jq yq
+    - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
-    - ssh-keyscan -p 60022 $PROXMOX_HOST > ~/.ssh/known_hosts
+    - echo "$SSH_HOST_KEY" > ~/.ssh/known_hosts
     - ssh -o BatchMode=yes -o ConnectTimeout=10 $PROXMOX_USER@$PROXMOX_HOST "echo 'SSH connection successful'" || exit 1
     - echo "Proxmox connection verified"
   environment:
