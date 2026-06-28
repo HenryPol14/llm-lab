@@ -84,7 +84,7 @@ table inet llm_lab_filter {
     ip saddr "${MONITORING_IP}" ip daddr "${LLM_IP}" tcp dport { 9100, 9400 } accept
 
     # Запрет трафика между VM (кроме разрешённого выше)
-    ip saddr "${INTERNAL_SUBNET}" ip daddr "${INTERNAL_SUBNET}" not daddr "${INTERNAL_GATEWAY}" drop
+    ip saddr "${INTERNAL_SUBNET}" ip daddr "${INTERNAL_SUBNET}" ip daddr != "${INTERNAL_GATEWAY}" drop
   }
 
   chain input {
