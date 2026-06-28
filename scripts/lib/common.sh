@@ -387,6 +387,7 @@ load_yaml_config() {
     NGINX_MEMORY_MB="$(yaml_get '.nginx_proxy.memory_mb')"
     NGINX_CORES="$(yaml_get '.nginx_proxy.cores')"
     NGINX_WAN_IP="$(yaml_get '.nginx_proxy.wan_ip')"
+    NGINX_IP="${NGINX_WAN_IP%/*}"
     NGINX_WAN_GW="$(yaml_get '.nginx_proxy.wan_gw')"
     LXC_TEMPLATE="$(yaml_get '.nginx_proxy.lxc_template')"
 

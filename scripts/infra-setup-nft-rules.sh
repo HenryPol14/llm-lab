@@ -13,6 +13,10 @@ NGINX_IP="${NGINX_IP:-10.10.10.70}"
 INTERNAL_SUBNET="${INTERNAL_SUBNET:-10.10.10.0/24}"
 WAN_BRIDGE="${WAN_BRIDGE:-vmbr0}"
 
+# Debug: check variables
+echo "DEBUG: LLM_IP=$LLM_IP, MONITORING_IP=$MONITORING_IP, NGINX_IP=$NGINX_IP" >&2
+echo "DEBUG: INTERNAL_SUBNET=$INTERNAL_SUBNET, WAN_BRIDGE=$WAN_BRIDGE" >&2
+
 mark_step "Configuring nftables for llm-lab"
 
 backup_ruleset() {
@@ -80,7 +84,7 @@ table inet llm_lab_filter {
     ip saddr "${MONITORING_IP}" ip daddr "${LLM_IP}" tcp dport { 9100, 9400 } accept
 
     # Запрет трафика между VM (кроме разрешённого выше)
-    ip saddr "${INTERNAL_SUBNET}" ip daddr "${INTERNAL_SUBNET}" drop
+    ip saddr "${INTERNAL_SUBNET}" ip daddr "${INTERNAL_SUBNET}" not daddr "${INTERNAL_GATEWAY}" drop
   }
 
   chain input {
