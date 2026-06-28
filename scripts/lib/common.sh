@@ -168,7 +168,7 @@ guest_is_ready() {
   [[ -z "$ip" ]] && die "Cannot determine IP for VM ${vmid} to check guest agent"
   
   info "Trying SSH on ${ip} as fallback"
-  if wait_for_ssh "$ip" 5; then
+  if wait_for_ssh "$ip" "$timeout"; then
     info "Guest agent ready on VM ${vmid} (via SSH)"
     return 0
   fi
