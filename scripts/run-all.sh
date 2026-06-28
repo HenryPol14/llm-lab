@@ -5,6 +5,9 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh"
+load_config
+require_root
 
 # FIX: убран вызов 00-bootstrap-remote.sh — он вызывается с локальной машины
 # и сам запускает run-all.sh на хосте, что создавало рекурсию.
