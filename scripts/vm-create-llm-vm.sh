@@ -93,9 +93,9 @@ gpu_passthrough_config_matches() {
 
   config="$(qm config "$LLM_VMID")" || return 1
 
-grep -qxF "machine: q35" <<< "$config" &&
-  grep -qxF "vga: none" <<< "$config" &&
-  grep -qxF "hostpci0: ${expected_hostpci}" <<< "$config" || false
+  grep -qxF "machine: q35" <<< "$config" &&
+    grep -qxF "vga: none" <<< "$config" &&
+    grep -qxF "hostpci0: ${expected_hostpci}" <<< "$config"
 }
 
 stop_vm_for_gpu_passthrough_change() {
@@ -199,7 +199,18 @@ start_and_wait_vm() {
   info "VM ${LLM_VMID} current status: $(qm status "$LLM_VMID" 2>&1 || echo 'unknown')"
   if ! vm_running "$LLM_VMID"; then
     info "VM ${LLM_VMID} is not running, starting..."
-    qm_command start "$LLM_VMID" || die "Failed to start VM ${LLM_VMID}"
+    if is_dry_run; then
+      info "[DRY RUN] Would start VM ${LLM_VMID}"; return 0
+    fi
+    qm start "$LLM_VMID" 2>&1 || {
+      warn "qm start returned non-zero, checking if VM actually started..."
+      sleep 3
+      if vm_running "$LLM_VMID"; then
+        info "VM ${LLM_VMID} started despite warning"
+      else
+        die "VM ${LLM_VMID} failed to start. Current status: $(qm status "$LLM_VMID" 2>&1)"
+      fi
+    }
     sleep 5
     if ! vm_running "$LLM_VMID"; then
       die "VM ${LLM_VMID} failed to start. Current status: $(qm status "$LLM_VMID" 2>&1)"
