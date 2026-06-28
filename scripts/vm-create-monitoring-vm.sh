@@ -75,8 +75,11 @@ start_and_wait_vm() {
   fi
   info "Waiting for Guest Agent to become ready..."
   guest_is_ready "$MONITORING_VMID" 240 || die "VM ${MONITORING_VMID} not ready"
-  info "Waiting for cloud-init to complete..."
-  wait_for_cloud_init "$MONITORING_VMID" 300 || die "cloud-init failed on VM ${MONITORING_VMID}"
+  info "Checking SSH access..."
+  wait_for_ssh "$MONITORING_IP" 120 || die "SSH not ready on VM ${MONITORING_VMID}"
+  if ! check_guest_network "$MONITORING_VMID" "$MONITORING_IP" 120; then
+    die "Guest network not configured on VM ${MONITORING_VMID} (expected IP: ${MONITORING_IP})"
+  fi
   check_system_running "$MONITORING_VMID" || die "System check failed for VM ${MONITORING_VMID}"
 }
 
