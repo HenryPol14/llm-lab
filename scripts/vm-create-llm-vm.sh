@@ -196,9 +196,11 @@ verify_gpu_passthrough() {
 }
 
 start_and_wait_vm() {
-  local current_status
-  current_status="$(qm status "$LLM_VMID" 2>&1 || echo 'unknown')"
+  local current_status status_output
+  status_output="$(qm status "$LLM_VMID" 2>&1)"
+  current_status="${status_output//[$'\r\n']/ }"
   info "VM ${LLM_VMID} current status: ${current_status}"
+  info "VM ${LLM_VMID} status raw: ${status_output}"
   if ! vm_running "$LLM_VMID"; then
     info "VM ${LLM_VMID} is not running, starting..."
     if is_dry_run; then

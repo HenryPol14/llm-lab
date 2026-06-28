@@ -127,6 +127,7 @@ vm_exists()  { qm config "$1" >/dev/null 2>&1; }
 vm_running() {
   local status
   status="$(qm status "$1" 2>/dev/null | grep -oE 'status: \K\w+' || true)"
+  info "[DEBUG] vm_running(${1}): parsed status='${status}'"
   [[ "$status" == "running" ]]
 }
 
