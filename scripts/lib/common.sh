@@ -151,10 +151,15 @@ guest_is_ready() {
 wait_for_cloud_init() {
   local vmid="$1" timeout="${2:-300}" waited=0
   info "Waiting for cloud-init on VM ${vmid}"
-  until qm guest exec "$vmid" -- test -f /var/lib/cloud/boot-finished >/dev/null 2>&1; do
+  while ! qm guest exec "$vmid" -- test -f /var/lib/cloud/boot-finished >/dev/null 2>&1; do
     sleep 5; ((waited += 5))
+    if ((waited % 30 == 0)); then
+      local status; status="$(qm guest exec "$vmid" -- cloud-init status 2>/dev/null || true)"
+      info "cloud-init status on VM ${vmid}: ${status}"
+    fi
     ((waited >= timeout)) && die "cloud-init did not finish on VM ${vmid} after ${timeout}s"
   done
+  info "cloud-init completed on VM ${vmid}"
 }
 
 parse_qm_guest_exec_output() {
@@ -229,9 +234,11 @@ check_guest_network() {
   local vmid="$1" expected_ip="$2" timeout="${3:-120}" waited=0
   info "Verifying guest network IP ${expected_ip} on VM ${vmid}"
   while :; do
-    local result out
+    local result out iface_list
     result="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || { sleep 3; ((waited+=3)); ((waited>=timeout)) && { warn "check_guest_network: ip failed"; return 1; }; continue; }
     out="$(parse_qm_guest_exec_output "$result")"
+    iface_list="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || true
+    info "check_guest_network: iface output on VM ${vmid}: ${iface_list}"
     printf '%s' "$out" | grep -q -- "$expected_ip" && { info "Guest ${vmid} has IP ${expected_ip}"; return 0; }
     sleep 3; ((waited+=3))
     ((waited>=timeout)) && { warn "Guest ${vmid} missing IP ${expected_ip} after ${timeout}s"; return 1; }

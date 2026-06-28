@@ -196,7 +196,12 @@ start_and_wait_vm() {
   guest_is_ready "$LLM_VMID" 240 || die "VM ${LLM_VMID} not ready (Agent timeout)"
   
   info "Waiting for cloud-init to complete..."
-  wait_for_cloud_init "$LLM_VMID" 300 || die "cloud-init failed on VM ${LLM_VMID}"
+  if ! wait_for_cloud_init "$LLM_VMID" 300; then
+    warn "cloud-init did not complete in time, checking status..."
+    qm guest exec "$LLM_VMID" -- ls -la /var/lib/cloud/ 2>/dev/null || true
+    qm guest exec "$LLM_VMID" -- cloud-init status 2>/dev/null || true
+    die "cloud-init failed on VM ${LLM_VMID}"
+  fi
   
   if ! check_guest_network "$LLM_VMID" "$LLM_IP" 120; then
     die "Guest network not configured on VM ${LLM_VMID} (expected IP: ${LLM_IP})"
