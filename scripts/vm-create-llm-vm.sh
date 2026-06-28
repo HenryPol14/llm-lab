@@ -35,9 +35,21 @@ bilg_check_existing_vm() {
 }
 
 clone_vm_if_needed() {
+  local existing_vm=0
+  if bilg_check_existing_vm; then
+    existing_vm=1
+  fi
+  
   if ! bilg_check_existing_vm; then
     info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
     qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"  # клон шаблона для LLM VM
+  elif [[ "${FORCE_REBUILD:-0}" == "1" ]]; then
+    info "FORCE_REBUILD=1: destroying and recreating VM ${LLM_VMID}"
+    qm destroy "$LLM_VMID" --purge
+    qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"
+    existing_vm=0
+  else
+    info "VM ${LLM_VMID} already exists, skipping clone"
   fi
 }
 
