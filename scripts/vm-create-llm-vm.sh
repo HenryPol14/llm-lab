@@ -234,6 +234,9 @@ start_and_wait_vm() {
   info "Waiting for Guest Agent to become ready..."
   guest_is_ready "$LLM_VMID" 240 || die "VM ${LLM_VMID} not ready (Agent timeout)"
   
+  info "Checking SSH access..."
+  wait_for_ssh "$LLM_IP" 120 || die "SSH not ready on VM ${LLM_VMID}"
+  
   info "Waiting for cloud-init to complete..."
   if ! wait_for_cloud_init "$LLM_VMID" 300; then
     warn "cloud-init did not complete in time, checking status..."
