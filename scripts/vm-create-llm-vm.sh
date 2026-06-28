@@ -116,6 +116,14 @@ stop_vm_for_gpu_passthrough_change() {
   if vm_running "$LLM_VMID"; then
     qm_command stop "$LLM_VMID"
   fi
+
+  info "Waiting for VM ${LLM_VMID} to fully stop..."
+  for _ in $(seq 1 20); do
+    if ! vm_running "$LLM_VMID"; then
+      break
+    fi
+    sleep 1
+  done
 }
 
 setup_gpu_passthrough() {
