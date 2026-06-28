@@ -196,14 +196,17 @@ verify_gpu_passthrough() {
 }
 
 start_and_wait_vm() {
+  info "VM ${LLM_VMID} current status: $(qm status "$LLM_VMID" 2>&1 || echo 'unknown')"
   if ! vm_running "$LLM_VMID"; then
-    info "Starting VM ${LLM_VMID}..."
+    info "VM ${LLM_VMID} is not running, starting..."
     qm_command start "$LLM_VMID" || die "Failed to start VM ${LLM_VMID}"
     sleep 5
     if ! vm_running "$LLM_VMID"; then
-      die "VM ${LLM_VMID} failed to start"
+      die "VM ${LLM_VMID} failed to start. Current status: $(qm status "$LLM_VMID" 2>&1)"
     fi
     info "VM ${LLM_VMID} started successfully"
+  else
+    info "VM ${LLM_VMID} is already running"
   fi
   
   info "Waiting for Guest Agent to become ready..."
