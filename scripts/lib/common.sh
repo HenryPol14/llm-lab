@@ -124,7 +124,11 @@ ensure_line() {
 }
 
 vm_exists()  { qm config "$1" >/dev/null 2>&1; }
-vm_running() { qm status "$1" 2>/dev/null | grep -q 'running' || true; }
+vm_running() {
+  local status
+  status="$(qm status "$1" 2>/dev/null | grep -oE 'status: \K\w+' || true)"
+  [[ "$status" == "running" ]]
+}
 
 # FIX: добавлена функция fix_locale — устраняет locale warnings в LXC контейнерах
 fix_locale() {
