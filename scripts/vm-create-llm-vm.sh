@@ -36,8 +36,7 @@ bilg_check_existing_vm() {
 
 clone_vm_if_needed() {
   if bilg_check_existing_vm; then
-    check_network_config
-    return 0
+    return 0  # skip clone and config for existing VM
   fi
   info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
   qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"  # клон шаблона для LLM VM
