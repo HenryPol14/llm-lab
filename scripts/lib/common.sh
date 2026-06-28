@@ -449,7 +449,7 @@ wait_for_ssh() {
   mkdir -p "$HOME/.ssh"
   
   while :; do
-    if ssh $opts -o ConnectTimeout=5 -o BatchMode=yes "${GUEST_USER:-ubuntu}@${host}" true >/dev/null 2>&1; then
+    if ssh $opts -o ConnectTimeout=10 -o BatchMode=yes "${GUEST_USER:-ubuntu}@${host}" true >/dev/null 2>&1; then
       info "SSH is ready on ${host}"; return 0
     fi
     sleep 3; ((waited += 3))
