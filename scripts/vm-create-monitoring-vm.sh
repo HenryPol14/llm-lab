@@ -42,6 +42,11 @@ clone_vm_if_needed() {
 
 configure_vm() {
   info "Configuring Monitoring VM hardware..."
+  # Skip network config for existing VM - cloud-init already applied
+  if vm_exists "$MONITORING_VMID" && vm_running "$MONITORING_VMID"; then
+    info "VM ${MONITORING_VMID} already running, skipping network reconfiguration"
+    return 0
+  fi
   qm_command set "$MONITORING_VMID" \
     --name "$MONITORING_NAME" \
     --memory "$MONITORING_MEMORY_MB" \
@@ -92,7 +97,7 @@ sgdisk -e /dev/sda || true
 partprobe /dev/sda || true
 growpart /dev/sda 1 || true
 resize2fs /dev/sda1 || true
-'
+ '
 }
 
 ensure_monitoring_data_disk_ready() {
