@@ -184,17 +184,9 @@ guest_is_ready() {
 wait_for_cloud_init() {
   local vmid="$1" timeout="${2:-300}" waited=0
   info "Waiting for cloud-init on VM ${vmid}"
-  # Use SSH to check cloud-init status instead of qm guest exec
-  local ip; ip="$(grep "IP:.*${vmid}" /tmp/vm-ips 2>/dev/null | awk '{print $2}' || echo "")"
-  local guest_ip; guest_ip="$(grep "^${vmid} " /tmp/vm-ips 2>/dev/null | awk '{print $2}' || echo "")"
-  [[ -z "$ip" ]] && [[ -z "$guest_ip" ]] && ip="$(grep "vmid.*${vmid}" /tmp/vm-ips 2>/dev/null | head -1 | awk '{print $NF}')"
   
-  # Fallback: try to get IP from config
-  if [[ -z "$ip" ]] && vm_exists "$vmid"; then
-    ip="$(qm config "$vmid" | grep 'ipconfig0:' | awk '{print $2}' | sed 's/ip=\([^,]*\).*/\1/' | cut -d/ -f1)"
-  fi
-  
-  [[ -z "$ip" ]] && die "Cannot determine IP for VM ${vmid} to check cloud-init"
+  local ip; ip="$(qm config "$vmid" 2>/dev/null | grep 'ipconfig0:' | awk '{print $2}' | sed 's/ip=\([^,]*\).*/\1/' | cut -d/ -f1)"
+  [[ -z "$ip" ]] && die "Cannot determine IP for VM ${vmid}"
   
   info "Waiting for cloud-init on VM ${vmid} (IP: ${ip})"
   while ! guest_ssh "$ip" 'test -f /var/lib/cloud/boot-finished' 2>/dev/null; do
