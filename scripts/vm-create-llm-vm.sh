@@ -189,7 +189,13 @@ verify_gpu_passthrough() {
 
 start_and_wait_vm() {
   if ! vm_running "$LLM_VMID"; then
-    qm_command start "$LLM_VMID"  # запускаем VM, если она еще не запущена
+    info "Starting VM ${LLM_VMID}..."
+    qm_command start "$LLM_VMID" || die "Failed to start VM ${LLM_VMID}"
+    sleep 5
+    if ! vm_running "$LLM_VMID"; then
+      die "VM ${LLM_VMID} failed to start"
+    fi
+    info "VM ${LLM_VMID} started successfully"
   fi
   
   info "Waiting for Guest Agent to become ready..."
