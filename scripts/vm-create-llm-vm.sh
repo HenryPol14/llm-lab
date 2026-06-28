@@ -43,22 +43,6 @@ clone_vm_if_needed() {
 
 configure_vm() {
   info "Configuring hardware and cloud-init network settings..."
-  local netplan_config
-  netplan_config=$(cat <<'NETPLAN'
-network:
-  version: 2
-  ethernets:
-    eth0:
-      dhcp4: no
-      addresses:
-        - ${LLM_IP}/${LLM_PREFIX}
-      gateway4: ${INTERNAL_GATEWAY}
-      nameservers:
-        addresses:
-          - ${DNS_SERVER}
-      critical: true
-NETPLAN
-)
   qm_command set "$LLM_VMID" \
     --name "$LLM_NAME" \
     --memory "$LLM_MEMORY_MB" \
@@ -70,9 +54,8 @@ NETPLAN
     --scsihw virtio-scsi-single \
     --net0 "virtio,bridge=${INTERNAL_BRIDGE},queues=8" \
     --ciuser "$GUEST_USER" \
-    --hostname "$LLM_NAME" \
-    --meta0 "provider=cloud-init,source=${netplan_config}" \
-    --cipassword "ubuntu"  # базовая сетка и cloud-init
+    --ipconfig0 "ip=${LLM_IP}/${LLM_PREFIX},gw=${INTERNAL_GATEWAY},dns=${DNS_SERVER}" \
+    --hostname "$LLM_NAME"  # базовая сетка и cloud-init
 
   info "Ensuring system disk scsi0 on host is ${LLM_SYSTEM_DISK_GB}G..."
   qm_command resize "$LLM_VMID" scsi0 "${LLM_SYSTEM_DISK_GB}G" || warn "Failed to resize system disk to ${LLM_SYSTEM_DISK_GB}GB"  # задаем размер системного диска
