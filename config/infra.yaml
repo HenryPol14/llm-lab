@@ -4,7 +4,7 @@
 proxmox:
   host: "77.50.132.85"
   user: "root"
-  remote_dir: "/root/llm-lab"
+  remote_dir: "/opt/projects/llm-lab"
 
 storage:
   template: "SSD-VMs"
@@ -36,7 +36,7 @@ llm_vm:
   cores: 4
   system_disk_gb: 40
   data_disk_gb: 120
-  gpu_pci_addr: "0000:01:00"  # GTX 1080 slot; includes VGA and audio functions
+  gpu_pci_addr: "0000:01:00"
 
 monitoring_vm:
   vmid: 120
@@ -48,7 +48,7 @@ monitoring_vm:
   system_disk_gb: 40
   data_disk_gb: 100
 
-# секция для nginx LXC контейнера
+# FIX: убран вложенный дублирующий ключ nginx_proxy.nginx_proxy
 nginx_proxy:
   ctid: 130
   hostname: "nginx-proxy"
@@ -56,9 +56,8 @@ nginx_proxy:
   disk_gb: 8
   memory_mb: 512
   cores: 1
-  nginx_proxy:
-  wan_ip: "10.10.10.70/24"  # ← публичный IP/prefix Proxmox хоста
-  wan_gw: "10.10.10.1"    # ← шлюз провайдера (уточните)
+  wan_ip: "10.10.10.70/24"
+  wan_gw: "10.10.10.1"
   lxc_template: "local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
 
 guest:
@@ -70,3 +69,4 @@ features:
   firewall_enabled: true
   logging_enabled: true
   audit_enabled: true
+  
