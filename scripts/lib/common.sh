@@ -238,12 +238,15 @@ check_guest_network() {
   local vmid="$1" expected_ip="$2" timeout="${3:-120}" waited=0
   info "Verifying guest network IP ${expected_ip} on VM ${vmid}"
   while :; do
-    local result out iface_list cloud_init_status
+    local result out iface_list cloud_init_status link_status route_status
     result="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || { sleep 3; ((waited+=3)); ((waited>=timeout)) && { warn "check_guest_network: ip failed"; return 1; }; continue; }
     out="$(parse_qm_guest_exec_output "$result")"
     iface_list="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || true
+    link_status="$(qm guest exec "$vmid" -- ip link show 2>/dev/null)" || true
+    route_status="$(qm guest exec "$vmid" -- ip route 2>/dev/null)" || true
     cloud_init_status="$(qm guest exec "$vmid" -- cloud-init status 2>/dev/null || true)"
     info "check_guest_network: VM ${vmid} iface: ${iface_list}, cloud-init: ${cloud_init_status}"
+    info "check_guest_network: VM ${vmid} link: ${link_status}, route: ${route_status}"
     if printf '%s' "$out" | grep -q -- "$expected_ip"; then
       info "Guest ${vmid} has IP ${expected_ip}"
       return 0
@@ -252,6 +255,8 @@ check_guest_network() {
     if ((waited >= timeout)); then
       warn "Guest ${vmid} missing IP ${expected_ip} after ${timeout}s"
       warn "Current interface list: ${iface_list}"
+      warn "Link status: ${link_status}"
+      warn "Route status: ${route_status}"
       return 1
     fi
   done
