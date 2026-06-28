@@ -147,10 +147,16 @@ fix_locale() {
 guest_is_ready() {
   local vmid="$1" timeout="${2:-180}" waited=0
   info "Waiting for guest agent on VM ${vmid}"
-  until qm guest exec "$vmid" -- true >/dev/null 2>&1; do
+  local status
+  while ! qm guest exec "$vmid" -- true >/dev/null 2>&1; do
     sleep 3; ((waited += 3))
+    if ((waited % 30 == 0)); then
+      status="$(qm status "$vmid" 2>&1)"
+      info "Guest agent not ready on VM ${vmid} after ${waited}s, current status: ${status}"
+    fi
     ((waited >= timeout)) && die "Guest agent not ready on VM ${vmid} after ${timeout}s"
   done
+  info "Guest agent ready on VM ${vmid}"
 }
 
 wait_for_cloud_init() {
