@@ -94,6 +94,14 @@ RUNNING="$(sudo docker compose ps -q | wc -l)"
 echo "=== Health checks ==="
 timeout 30 curl -fsS http://localhost:11434/api/tags \
   && echo "Ollama API OK" || echo "WARN: Ollama not ready yet (may still be loading)"
+
+# Install default model if no models present
+if ! sudo docker compose exec -T ollama ollama list | grep -q .; then
+  echo "No models found, installing llama3.2:1b..."
+  sudo docker compose exec -T ollama ollama pull llama3.2:1b
+  echo "Model installed"
+fi
+
 timeout 15 curl -fsS http://localhost:3000/login >/dev/null \
   && echo "Open WebUI OK" || echo "WARN: WebUI not ready yet"
 EOF
