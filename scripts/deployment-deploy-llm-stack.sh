@@ -169,6 +169,7 @@ install_models_if_needed() {
 
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
+cd /opt/llm-stack
 
 # Check GPU availability via nvidia-smi
 if /usr/bin/nvidia-smi -L >/dev/null 2>&1; then
