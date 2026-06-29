@@ -175,8 +175,8 @@ if /usr/bin/nvidia-smi -L >/dev/null 2>&1; then
   echo "GPU detected - installing mistral:7b (GPU-optimized 7B model)"
   
   # Pull GPU-optimized model (7B fits in 8GB VRAM with ~1GB headroom)
-  if ! /usr/bin/ollama list 2>/dev/null | tail -n +2 | grep -q "mistral:7b"; then
-    /usr/bin/ollama pull mistral:7b
+  if ! ollama list 2>/dev/null | tail -n +2 | grep -q "mistral:7b"; then
+    ollama pull mistral:7b
     echo "Model mistral:7b installed"
   else
     echo "Model mistral:7b already present"
@@ -184,8 +184,8 @@ if /usr/bin/nvidia-smi -L >/dev/null 2>&1; then
   
   # Optional: pull llama3.2:3b as backup for CPU fallback
   echo "Installing llama3.2:3b as CPU fallback model..."
-  if ! /usr/bin/ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
-    /usr/bin/ollama pull llama3.2:3b
+  if ! ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
+    ollama pull llama3.2:3b
     echo "Model llama3.2:3b installed"
   else
     echo "Model llama3.2:3b already present"
@@ -193,8 +193,8 @@ if /usr/bin/nvidia-smi -L >/dev/null 2>&1; then
 else
   echo "No GPU detected - installing llama3.2:3b (CPU-optimized)"
   
-  if ! /usr/bin/ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
-    /usr/bin/ollama pull llama3.2:3b
+  if ! ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
+    ollama pull llama3.2:3b
     echo "Model llama3.2:3b installed"
   else
     echo "Model llama3.2:3b already present"
@@ -202,7 +202,7 @@ else
 fi
 
 echo "Available models:"
-/usr/bin/ollama list
+ollama list
 EOF
 }
 
