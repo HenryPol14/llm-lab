@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 # shellcheck source=./lib/common.sh
-# Описание: Настраивает сетевые мосты и правила фаервола на хосте.
-# Комментарий добавлен автоматически — дополните при необходимости.
-NFTABLES_DIR="${NFTABLES_DIR:-/etc/nftables.d}"
-NFTABLES_CONF="${NFTABLES_CONF:-/etc/nftables.conf}"
-
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
-load_config                                           # загружаем конфигурацию проекта
-require_root                                          # проверяем права root
-
-mark_step "Configuring network and firewall with whitelist rules"  # фиксируем шаг в журнале
-
+# Описание: Настраивает внутренний bridge и IP-forwarding на Proxmox-хосте.
+#
+#   ЧТО ДЕЛАЕТ ЭТОТ СКРИПТ:
+#     1. Создаёт bridge vmbr1 (INTERNAL_BRIDGE) с адресом INTERNAL_CIDR
+#     2. Включает net.ipv4.ip_forward
+#
+#   ЧТО НЕ ДЕЛАЕТ:
+#     - nftables правила — только infra-setup-nft-rules.sh
+#       (один авторитетный источник правил, нет конфликта таблиц)
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
+require_root
 require_cmd ip
-require_cmd nft
 
+mark_step "Configuring internal bridge and IP forwarding"
+
+# ---------------------------------------------------------------------------
 setup_internal_bridge() {
-  info "Setting up internal bridge ${INTERNAL_BRIDGE}"
-  mkdir -p /etc/network/interfaces.d                             # создаем каталог для дополнительных сетевых конфигураций
-  cat >/etc/network/interfaces.d/llm-lab.cfg <<EOF
+  info "Setting up bridge ${INTERNAL_BRIDGE} with address ${INTERNAL_CIDR}"
+
+  # Запись в /etc/network/interfaces.d/ — персистентна после reboot
+  mkdir -p /etc/network/interfaces.d
+  cat > /etc/network/interfaces.d/llm-lab.cfg <<EOF
 auto ${INTERNAL_BRIDGE}
 iface ${INTERNAL_BRIDGE} inet static
     address ${INTERNAL_CIDR}
@@ -26,81 +31,67 @@ iface ${INTERNAL_BRIDGE} inet static
     bridge-fd 0
 EOF
 
+  # Применяем без перезагрузки
   if command -v ifreload >/dev/null 2>&1; then
-    ifreload -a || true
+    ifreload -a 2>/dev/null || true
   fi
 
+  # Создаём bridge если не существует
   if ! ip link show "$INTERNAL_BRIDGE" >/dev/null 2>&1; then
-    info "Creating bridge ${INTERNAL_BRIDGE}"
     ip link add name "$INTERNAL_BRIDGE" type bridge
+    info "Created bridge ${INTERNAL_BRIDGE}"
   fi
 
   ip link set "$INTERNAL_BRIDGE" up
-  if ! ip -4 addr show "$INTERNAL_BRIDGE" | grep -q "$INTERNAL_CIDR"; then
+
+  # Назначаем адрес если ещё не назначен
+  if ! ip -4 addr show "$INTERNAL_BRIDGE" | grep -qF "${INTERNAL_CIDR}"; then
     ip addr add "$INTERNAL_CIDR" dev "$INTERNAL_BRIDGE" 2>/dev/null || true
+    info "Assigned ${INTERNAL_CIDR} to ${INTERNAL_BRIDGE}"
+  else
+    info "Bridge ${INTERNAL_BRIDGE} already has ${INTERNAL_CIDR}"
   fi
 }
 
+# ---------------------------------------------------------------------------
 enable_ip_forwarding() {
   info "Enabling IP forwarding"
-  mkdir -p /etc/sysctl.d                                       # создаем директорию для системных параметров
-  cat >/etc/sysctl.d/99-llm-lab-forwarding.conf <<EOF
+  mkdir -p /etc/sysctl.d
+  cat > /etc/sysctl.d/99-llm-lab-forwarding.conf <<'EOF'
 net.ipv4.ip_forward=1
 EOF
-  sysctl --system >/dev/null                                   # применяем изменения сразу
+  sysctl --system >/dev/null 2>&1
+  info "IP forwarding enabled"
 }
 
-create_firewall_whitelist() {
-  if [[ "${FIREWALL_ENABLED:-true}" != "true" ]]; then
-    warn "Firewall disabled by config, skipping"
-    return 0
+# ---------------------------------------------------------------------------
+verify() {
+  info "Verifying bridge and forwarding"
+
+  if ! ip link show "$INTERNAL_BRIDGE" >/dev/null 2>&1; then
+    die "Bridge ${INTERNAL_BRIDGE} missing after setup"
   fi
 
-  info "Creating firewall whitelist rules"
-  mkdir -p "$NFTABLES_DIR"
-
-  nftables_whitelist_config >"$NFTABLES_DIR/llm-lab.nft"
-
-  if ! grep -q "include \"$NFTABLES_DIR/*.nft\"" "$NFTABLES_CONF"; then
-    printf '\ninclude "%s/*.nft"\n' "$NFTABLES_DIR" >> "$NFTABLES_CONF"
-  fi
-}
-
-apply_firewall() {
-  info "Applying firewall rules"
-  systemctl enable --now nftables
-  nft -f "$NFTABLES_CONF"
-
-  info "Current nftables rules:"
-  nft list ruleset
-}
-
-verify_connectivity() {
-  info "Verifying connectivity to internal bridge"
-
-  if ! ip addr show "$INTERNAL_BRIDGE" >/dev/null 2>&1; then
-    warn "Bridge ${INTERNAL_BRIDGE} not configured"
-    return 1
-  fi
-
-  if ip -4 addr show "$INTERNAL_BRIDGE" | grep -q "$INTERNAL_CIDR"; then
-    info "Bridge ${INTERNAL_BRIDGE} has correct address ${INTERNAL_CIDR}"
+  if ip -4 addr show "$INTERNAL_BRIDGE" | grep -qF "$INTERNAL_CIDR"; then
+    info "✓ ${INTERNAL_BRIDGE} has ${INTERNAL_CIDR}"
   else
-    warn "Bridge ${INTERNAL_BRIDGE} missing address ${INTERNAL_CIDR}"
-    return 1
+    warn "✗ ${INTERNAL_BRIDGE} missing ${INTERNAL_CIDR}"
   fi
 
-  if nft list ruleset 2>/dev/null | grep -q "llm_lab_nat"; then
-    info "NAT rules are active"
+  local fwd
+  fwd="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
+  if [[ "$fwd" == "1" ]]; then
+    info "✓ IP forwarding enabled"
   else
-    warn "NAT rules not found (may be configured in separate ruleset)"
+    warn "✗ IP forwarding not active"
   fi
+
+  info "Next step: run infra-setup-nft-rules.sh to configure NAT and firewall"
 }
 
+# ---------------------------------------------------------------------------
 setup_internal_bridge
 enable_ip_forwarding
-create_firewall_whitelist
-apply_firewall
-verify_connectivity
+verify
 
-audit_log "Network and firewall configured"
+audit_log "Network bridge ${INTERNAL_BRIDGE} configured"
