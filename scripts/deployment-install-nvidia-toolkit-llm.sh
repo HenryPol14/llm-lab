@@ -34,24 +34,22 @@ check_gpu_presence() {
 
 # ---------------------------------------------------------------------------
 install_nvidia_drivers() {
-  info "Installing NVIDIA drivers via ubuntu-drivers"
+  info "Installing NVIDIA drivers (latest production: 565)"
 
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
-# Устанавливаем ubuntu-drivers-common если нет
-if ! command -v ubuntu-drivers >/dev/null 2>&1; then
-  apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common
+
+# Добавляем PPA для актуальных драйверов (идемпотентно)
+if ! grep -q "graphics-drivers/ppa" /etc/apt/sources.list.d/ubuntu-graphics-drivers.ppa 2>/dev/null; then
+  add-apt-repository -y ppa:graphics-drivers/ppa
 fi
 
-if /usr/bin/nvidia-smi >/dev/null 2>&1; then
-  echo "NVIDIA driver already loaded:"
-  /usr/bin/nvidia-smi -L
-  exit 0
-fi
+# Обновляем кэш пакетов
+apt-get update -qq
 
-echo "Installing recommended NVIDIA driver..."
-ubuntu-drivers install
+# Устанавливаем最新的 production драйвер (565) — идемпотентно
+DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-driver-565-server
+
 echo "Driver package installed (kernel module not loaded until reboot)"
 EOF
 
@@ -68,14 +66,13 @@ EOF
   # Модуль не загружен — нужна перезагрузка
   info "NVIDIA module not loaded yet — rebooting VM to activate driver"
   guest_ssh "$TARGET" 'sudo reboot' || true
-  sleep 20   # ждём пока VM уйдёт в reboot прежде чем опрашивать SSH
+  sleep 20
 
   info "Waiting for VM to come back..."
   wait_for_ssh "$TARGET" 300
   ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
   ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-  # После reboot модуль обязан загрузиться
   guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L' \
     || die "nvidia-smi failed after reboot — check driver installation"
   info "NVIDIA driver OK after reboot"
