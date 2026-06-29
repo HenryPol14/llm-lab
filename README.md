@@ -113,12 +113,15 @@ cd /root/llm-lab
 
 ## 🌐 Доступные сервисы
 
-| Сервис | URL | Аутентификация |
-|--------|-----|----------------|
-| OpenWebUI | `http://${LLM_IP}:3000` | guest / guest (смените!) |
-| Ollama API | `http://${LLM_IP}:11434` | Без auth |
-| Prometheus | `http://${MONITORING_IP}:9090` | Без auth |
-| Grafana | `http://${MONITORING_IP}:3000` | admin / admin (смените!) |
+| Сервис | VM | Локальный порт | Внешний (через nginx) | Аутентификация |
+|--------|-----|----------------|----------------------|----------------|
+| OpenWebUI | LLM (10.10.10.50) | 3000→8080 | `http://77.50.132.85:8080` | guest / guest (смените!) |
+| Ollama API | LLM (10.10.10.50) | 11434 | `http://77.50.132.85:11434` | Без auth |
+| Prometheus | Monitoring (10.10.10.60) | 9090 | `http://77.50.132.85:9090` | Без auth |
+| Grafana | Monitoring (10.10.10.60) | 3000 | `http://77.50.132.85:3000` | admin / admin (смените!) |
+| Alertmanager | Monitoring (10.10.10.60) | 9093 | `http://77.50.132.85:9093` | Без auth |
+| Node Exporter | LLM (10.10.10.50) | 9100 | — | — |
+| DCGM Exporter | LLM (10.10.10.50) | 9400 | — | — |
 
 ## 🔒 Безопасность
 
@@ -222,14 +225,36 @@ FORCE_REBUILD=1 ./scripts/run-all.sh  # Пересоздает VM
 - **DNAT:** входящий трафик → nginx proxy (10.10.10.70)
 - **Whitelist:** `table inet llm_lab_filter` — строгий фильтр запрета VM→VM
 
-**Порты DNAT (77.50.132.85 → 10.10.10.70):**
-| Порт | Сервис |
-|------|--------|
-| 3000 | Grafana |
-| 8080 | Open WebUI |
-| 9090 | Prometheus |
-| 9093 | Alertmanager |
-| 11434 | Ollama API |
+**DNAT порты (77.50.132.85 → 10.10.10.70 → внутренние сервисы):**
+| Внешний порт | Целевой VM | Порт сервиса | Сервис |
+|--------------|------------|--------------|--------|
+| 8080 | LLM (10.10.10.50) | 3000 | Open WebUI |
+| 3000 | Monitoring (10.10.10.60) | 3000 | Grafana |
+| 9090 | Monitoring (10.10.10.60) | 9090 | Prometheus |
+| 9093 | Monitoring (10.10.10.60) | 9093 | Alertmanager |
+| 11434 | LLM (10.10.10.50) | 11434 | Ollama API |
+
+### GPU usage
+
+Для использования GPU:
+- Установлен драйвер NVIDIA 565.57.01
+- NVIDIA Container Toolkit настроен на Docker runtime
+- Контейнеры получают доступ к GPU через `gpus: all` в docker-compose.yml
+- Переменные окружения: `NVIDIA_VISIBLE_DEVICES=all`, `NVIDIA_DRIVER_CAPABILITIES=compute,utility`
+
+**Проверка GPU в контейнере:**
+```bash
+docker exec -it ollama nvidia-smi -L
+docker exec -it ollama ollama list
+```
+
+**Проверка GPU usage:**
+```bash
+nvidia-smi          # на хосте — видно процессы
+curl localhost:9400/metrics | grep -i gpu  # DCGM exporter
+```
+
+**Важно:** Ollama использует GPU только при вычислениях. Во время простоя GPU Util = 0% — это нормально.
 
 ### Основные параметры (YAML)
 
@@ -294,6 +319,15 @@ qm config 110 | grep hostpci
 # В VM
 lspci | grep -i nvidia
 nvidia-smi
+
+# Проверить GPU в контейнере
+docker exec -it ollama nvidia-smi -L
+
+# Проверить, что контейнер видит GPU (даже если не используется)
+docker exec -it ollama ollama list
+
+# GPU Util = 0% — нормально, если модель не загружается или Ollama просто запущен
+# Для нагрузки запустите генерацию текста в Open WebUI
 ```
 
 **Firewall блокирует:**
