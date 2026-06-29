@@ -20,17 +20,52 @@ NGINX_CORES="${NGINX_CORES:-1}"
 NGINX_IP="${NGINX_WAN_IP:-10.10.10.70/24}"
 NGINX_GW="${NGINX_WAN_GW:-10.10.10.1}"
 NGINX_IP_ONLY="${NGINX_IP%%/*}"
-LXC_TEMPLATE="${LXC_TEMPLATE:-local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst}"
-SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-$HOME/.ssh/id_rsa.pub}"
-
 LLM_IP="${LLM_IP:-10.10.10.50}"
 MONITORING_IP="${MONITORING_IP:-10.10.10.60}"
 PROXMOX_PUB_IP="${PROXMOX_HOST:-}"
+PROXMOX_USER="${PROXMOX_USER:-root@pam}"
 
 [[ -n "$PROXMOX_PUB_IP" ]] || die "PROXMOX_HOST not set in infra.yaml"
-[[ -f "$SSH_PUBLIC_KEY" ]] || die "SSH public key not found: $SSH_PUBLIC_KEY"
 
 mark_step "Deploying nginx proxy LXC ${NGINX_CTID}"
+
+# ---------------------------------------------------------------------------
+# Install SSL dependencies (must be before configure_nginx)
+# ---------------------------------------------------------------------------
+install_ssl_dependencies() {
+  info "Installing SSL dependencies (openssl) in LXC ${NGINX_CTID}"
+  pct exec "$NGINX_CTID" -- bash -c "
+    set -Eeuo pipefail
+    apt-get update -qq
+    apt-get install -y -qq openssl
+    echo 'openssl installed'
+  " || warn "openssl installation skipped"
+}
+
+# ---------------------------------------------------------------------------
+# Generate self-signed certificate (must be before configure_nginx)
+# ---------------------------------------------------------------------------
+generate_selfsigned_cert() {
+  info "Generating self-signed SSL certificate"
+  
+  pct exec "$NGINX_CTID" -- bash -c "
+    set -Eeuo pipefail
+    mkdir -p /etc/ssl/private
+    chmod 700 /etc/ssl/private
+    
+    # Generate self-signed cert if not exists
+    if [ ! -f ${SSL_KEY} ] || [ ! -f ${SSL_CERT} ]; then
+      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout ${SSL_KEY} \
+        -out ${SSL_CERT} \
+        -subj \"/C=RU/ST=Moscow/L=Moscow/O=LLMLab/OU=IT/CN=77.50.132.85\" 2>/dev/null
+      chmod 600 ${SSL_KEY}
+      echo 'Self-signed certificate generated'
+    else
+      echo 'SSL certificate already exists'
+    fi
+  "
+}
 
 download_lxc_template() {
   local tmpl_name
@@ -50,15 +85,8 @@ download_lxc_template() {
 
 create_container() {
   if pct status "$NGINX_CTID" >/dev/null 2>&1; then
-    if [[ "${FORCE_REBUILD:-0}" == "1" ]]; then
-      warn "FORCE_REBUILD=1: destroying existing container ${NGINX_CTID}"
-      pct stop "$NGINX_CTID" 2>/dev/null || true
-      sleep 3
-      pct destroy "$NGINX_CTID" --purge
-    else
-      info "Container ${NGINX_CTID} already exists, skipping creation"
-      return 0
-    fi
+    info "Container ${NGINX_CTID} already exists, skipping creation"
+    return 0
   fi
 
   info "Creating LXC container ${NGINX_CTID} on ${INTERNAL_BRIDGE} with IP ${NGINX_IP}"
@@ -108,8 +136,6 @@ install_nginx() {
 configure_nginx() {
   info "Configuring nginx reverse proxy with TLS"
 
-  # FIX: убраны одинарные кавычки вокруг EOF — теперь LLM_IP и MONITORING_IP интерполируются
-  # Экранируем только переменные nginx (\$host, \$remote_addr и т.д.)
   local nginx_conf
   nginx_conf="$(cat <<EOF
 # llm-lab nginx reverse proxy with TLS
@@ -119,7 +145,7 @@ configure_nginx() {
 server {
     listen 80;
     server_name _;
-    return 301 https://\\\$host\\\$request_uri;
+    return 301 https://\$host\$request_uri;
 }
 
 # HTTPS server - unified entry point
@@ -136,12 +162,12 @@ server {
     # Open WebUI (root path)
     location / {
         proxy_pass         http://${LLM_IP}:3000;
-        proxy_set_header   Host \\\$host;
-        proxy_set_header   X-Real-IP \\\$remote_addr;
-        proxy_set_header   X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \\\$scheme;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_http_version 1.1;
-        proxy_set_header   Upgrade \\\$http_upgrade;
+        proxy_set_header   Upgrade \$http_upgrade;
         proxy_set_header   Connection "upgrade";
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
@@ -150,10 +176,10 @@ server {
     # Ollama API
     location /ollama/ {
         proxy_pass         http://${LLM_IP}:11434/;
-        proxy_set_header   Host \\\$host;
-        proxy_set_header   X-Real-IP \\\$remote_addr;
-        proxy_set_header   X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \\\$scheme;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
         client_max_body_size 0;
@@ -162,31 +188,31 @@ server {
     # Prometheus
     location /prometheus/ {
         proxy_pass         http://${MONITORING_IP}:9090/;
-        proxy_set_header   Host \\\$host;
-        proxy_set_header   X-Real-IP \\\$remote_addr;
-        proxy_set_header   X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \\\$scheme;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
     }
 
     # Grafana
     location /grafana/ {
         proxy_pass         http://${MONITORING_IP}:3000/;
-        proxy_set_header   Host \\\$host;
-        proxy_set_header   X-Real-IP \\\$remote_addr;
-        proxy_set_header   X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \\\$scheme;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_http_version 1.1;
-        proxy_set_header   Upgrade \\\$http_upgrade;
+        proxy_set_header   Upgrade \$http_upgrade;
         proxy_set_header   Connection "upgrade";
     }
 
     # Alertmanager
     location /alertmanager/ {
         proxy_pass         http://${MONITORING_IP}:9093/;
-        proxy_set_header   Host \\\$host;
-        proxy_set_header   X-Real-IP \\\$remote_addr;
-        proxy_set_header   X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \\\$scheme;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
     }
 }
 EOF
@@ -227,7 +253,6 @@ print_access_info() {
 download_lxc_template
 create_container
 wait_for_container
-# FIX: fix_locale теперь вызывается с явным CTID и определена в common.sh
 fix_locale "$NGINX_CTID"
 install_nginx
 install_ssl_dependencies
@@ -237,41 +262,3 @@ verify_nginx
 print_access_info
 
 audit_log "Nginx proxy LXC ${NGINX_CTID} deployed"
-
-# ---------------------------------------------------------------------------
-# Install SSL dependencies
-# ---------------------------------------------------------------------------
-install_ssl_dependencies() {
-  info "Installing SSL dependencies (openssl) in LXC ${NGINX_CTID}"
-  pct exec "$NGINX_CTID" -- bash -c "
-    set -Eeuo pipefail
-    apt-get update -qq
-    apt-get install -y -qq openssl
-    echo 'openssl installed'
-  " || warn "openssl installation skipped"
-}
-
-# ---------------------------------------------------------------------------
-# Generate self-signed certificate
-# ---------------------------------------------------------------------------
-generate_selfsigned_cert() {
-  info "Generating self-signed SSL certificate"
-  
-  pct exec "$NGINX_CTID" -- bash -c "
-    set -Eeuo pipefail
-    mkdir -p /etc/ssl/private
-    chmod 700 /etc/ssl/private
-    
-    # Generate self-signed cert if not exists
-    if [ ! -f ${SSL_KEY} ] || [ ! -f ${SSL_CERT} ]; then
-      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout ${SSL_KEY} \
-        -out ${SSL_CERT} \
-        -subj \"/C=RU/ST=Moscow/L=Moscow/O=LLMLab/OU=IT/CN=77.50.132.85\" 2>/dev/null
-      chmod 600 ${SSL_KEY}
-      echo 'Self-signed certificate generated'
-    else
-      echo 'SSL certificate already exists'
-    fi
-  "
-}
