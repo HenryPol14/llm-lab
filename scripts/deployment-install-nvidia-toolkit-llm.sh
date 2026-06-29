@@ -76,6 +76,24 @@ EOF
   guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L' \
     || die "nvidia-smi failed after reboot — check driver installation"
   info "NVIDIA driver OK after reboot"
+
+  # Проверка на mismatch driver/library (если ядро не перезагрузилось с новым модулем)
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+
+# Проверяем: nvidia-smi работает, но docker run --gpus all падает с mismatch
+if /usr/bin/nvidia-smi >/dev/null 2>&1 && ! /usr/bin/nvidia-smi -L 2>&1 | grep -q "Driver Version:"; then
+  echo "NVIDIA driver mismatch detected — reloading kernel modules"
+  
+  systemctl stop docker 2>/dev/null || true
+  rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || true
+  modprobe nvidia nvidia_modeset nvidia_uvm
+  systemctl start docker
+
+  echo "GPU test after module reload:"
+  /usr/bin/nvidia-smi -L
+fi
+EOF
 }
 
 # ---------------------------------------------------------------------------
@@ -140,15 +158,37 @@ verify_gpu_in_docker() {
   info "Running GPU container test (nvidia-smi inside Docker)"
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
-# Используем небольшой образ чтобы не тянуть 4GB cuda образ при каждом запуске
-if docker run --rm --gpus all ubuntu:22.04 \
-    sh -c 'ls /dev/nvidia* 2>/dev/null && echo "GPU devices visible"'; then
+
+test_gpu() {
+  docker run --rm --gpus all ubuntu:22.04 \
+    sh -c 'ls /dev/nvidia* 2>/dev/null && echo "GPU devices visible"' 2>&1
+}
+
+#first attempt
+if test_output="$(test_gpu)" && echo "$test_output" | grep -q "GPU devices visible"; then
   echo "GPU test PASSED"
-else
-  echo "GPU device test failed — trying nvidia-smi container"
-  # Fallback: полный образ (уже скачан на этапе configure)
-  docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi
+  exit 0
 fi
+
+# Check for mismatch error
+if echo "$test_output" | grep -q "driver/library version mismatch"; then
+  echo "Driver/library mismatch detected — reloading kernel modules"
+  
+  systemctl stop docker 2>/dev/null || true
+  rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || true
+  modprobe nvidia nvidia_modeset nvidia_uvm
+  systemctl start docker
+  echo "Modules reloaded, testing again..."
+  
+  if test_output="$(test_gpu)" && echo "$test_output" | grep -q "GPU devices visible"; then
+    echo "GPU test PASSED after reload"
+    exit 0
+  fi
+fi
+
+# Fallback: полный образ (уже скачан на этапе configure)
+echo "GPU device test failed — trying nvidia-smi container"
+docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi
 EOF
 }
 
