@@ -29,6 +29,7 @@ require_root
 "${SCRIPT_DIR}/deployment-install-guest-runtime.sh"     "${LLM_IP}"
 "${SCRIPT_DIR}/deployment-install-nvidia-toolkit-llm.sh" "${LLM_IP}"
 "${SCRIPT_DIR}/deployment-deploy-llm-stack.sh"          "${LLM_IP}"
+"${SCRIPT_DIR}/ollama-setup-models.sh"                  "${LLM_IP}"
 
 # ---------------------------------------------------------------------------
 # 4. Monitoring VM: Docker + стек
