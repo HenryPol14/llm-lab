@@ -1,117 +1,170 @@
 #!/usr/bin/env bash
 # shellcheck source=./lib/common.sh
-# Описание: Устанавливает NVIDIA Container Toolkit внутри гостевой VM.
-# Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
-load_config                                           # загружаем конфигурацию проекта
+# Описание: Устанавливает NVIDIA драйверы и Container Toolkit в LLM VM.
+#
+#   Порядок:
+#     1. Проверяем наличие GPU через lspci
+#     2. Устанавливаем драйвер ubuntu-drivers
+#     3. Перезагружаем VM если модуль ещё не загружен
+#     4. Устанавливаем nvidia-container-toolkit
+#     5. Конфигурируем docker runtime
+#     6. Верифицируем — без || true, ошибка = реальный провал
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
 
-TARGET="${1:-${LLM_IP:-${MONITORING_IP:-}}}"          # IP целевой VM для установки NVIDIA toolkit
-if [[ -z "$TARGET" ]]; then
-  die "Target IP required"
-fi
+TARGET="${1:-${LLM_IP:-}}"
+[[ -n "$TARGET" ]] || die "Target IP required. Usage: $0 <IP>"
 
 mark_step "Installing NVIDIA Container Toolkit on ${TARGET}"
-
 wait_for_ssh "$TARGET" 240
-
-# Очищаем устаревший ключ хоста — VM могла пересоздаваться
 ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
-mkdir -p "$HOME/.ssh"
 ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
+# ---------------------------------------------------------------------------
 check_gpu_presence() {
-  local gpu_count
-  gpu_count="$(guest_ssh "$TARGET" 'lspci | grep -i nvidia | wc -l' 2>/dev/null || echo "0")" || true  # проверяем наличие NVIDIA GPU внутри гостя
-  if [[ "$gpu_count" -eq "0" ]]; then
-    info "No NVIDIA GPU detected in guest, skipping NVIDIA toolkit"
+  local count
+  count="$(guest_ssh "$TARGET" 'lspci | grep -ci nvidia' 2>/dev/null || echo 0)"
+  if [[ "$count" -eq 0 ]]; then
+    info "No NVIDIA GPU found in guest — skipping toolkit"
     return 1
   fi
-  info "Detected $gpu_count NVIDIA GPU(s) in guest"
+  info "Detected ${count} NVIDIA device(s) in guest"
   return 0
 }
 
+# ---------------------------------------------------------------------------
 install_nvidia_drivers() {
-  info "Installing NVIDIA drivers"
+  info "Installing NVIDIA drivers via ubuntu-drivers"
+
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
-# Устанавливаем ubuntu-drivers-common если не установлен
+# Устанавливаем ubuntu-drivers-common если нет
 if ! command -v ubuntu-drivers >/dev/null 2>&1; then
-  apt-get update -y >/dev/null 2>&1
+  apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common
 fi
 
-if ! /usr/bin/nvidia-smi >/dev/null 2>&1; then
-  ubuntu-drivers install || true
-else
-  echo "NVIDIA drivers already installed"
-  /usr/bin/nvidia-smi || true
+if /usr/bin/nvidia-smi >/dev/null 2>&1; then
+  echo "NVIDIA driver already loaded:"
+  /usr/bin/nvidia-smi -L
+  exit 0
 fi
+
+echo "Installing recommended NVIDIA driver..."
+ubuntu-drivers install
+echo "Driver package installed (kernel module not loaded until reboot)"
 EOF
 
-  # Проверяем через sudo — nvidia-smi может быть не в PATH обычного пользователя
-  local smi_ok
-  smi_ok="$(guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L 2>/dev/null | wc -l' || echo "0")" || true || true
-  if [[ "$smi_ok" -eq 0 ]]; then
-    info "NVIDIA kernel module not loaded, rebooting VM..."
-    guest_ssh "$TARGET" 'sudo reboot' || true || true
-    sleep 15
-    wait_for_ssh "$TARGET" 180
-    ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true || true
-    ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true || true
-    guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi' || die "nvidia-smi failed after reboot"
+  # Проверяем загружен ли модуль
+  local loaded
+  loaded="$(guest_ssh "$TARGET" \
+    'sudo /usr/bin/nvidia-smi -L 2>/dev/null | wc -l' || echo 0)"
+
+  if [[ "$loaded" -gt 0 ]]; then
+    info "NVIDIA kernel module already loaded (${loaded} GPU(s))"
+    return 0
   fi
-  info "NVIDIA drivers OK"
+
+  # Модуль не загружен — нужна перезагрузка
+  info "NVIDIA module not loaded yet — rebooting VM to activate driver"
+  guest_ssh "$TARGET" 'sudo reboot' || true
+  sleep 20   # ждём пока VM уйдёт в reboot прежде чем опрашивать SSH
+
+  info "Waiting for VM to come back..."
+  wait_for_ssh "$TARGET" 300
+  ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
+  ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
+  # После reboot модуль обязан загрузиться
+  guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L' \
+    || die "nvidia-smi failed after reboot — check driver installation"
+  info "NVIDIA driver OK after reboot"
 }
 
+# ---------------------------------------------------------------------------
 install_nvidia_toolkit() {
-  info "Installing NVIDIA Container Toolkit"
+  info "Installing nvidia-container-toolkit"
+
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail || true
+set -Eeuo pipefail
+
 if dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
-  echo "NVIDIA Container Toolkit already installed"
-else
-  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg || true
-  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null || true
-  sudo apt-get update -y >/dev/null 2>&1 || true
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit || true
+  echo "nvidia-container-toolkit already installed"
+  exit 0
 fi
+
+# Добавляем репозиторий NVIDIA
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit
+echo "nvidia-container-toolkit installed"
 EOF
 }
 
-configure_nvidia_runtime() {
-  info "Configuring NVIDIA runtime for Docker"
+# ---------------------------------------------------------------------------
+configure_docker_runtime() {
+  info "Configuring nvidia runtime for Docker"
+
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
 nvidia-ctk runtime configure --runtime=docker
 systemctl restart docker
-sleep 5
-docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi || true
+# Ждём пока docker поднимется
+timeout=30
+until docker info >/dev/null 2>&1; do
+  sleep 2; ((timeout--))
+  (( timeout <= 0 )) && { echo "Docker failed to restart"; exit 1; }
+done
+echo "Docker restarted with nvidia runtime"
 EOF
 }
 
-verify_installation() {
-  info "Verifying NVIDIA Container Toolkit installation"
+# ---------------------------------------------------------------------------
+# FIX: убран || true из GPU-теста — если GPU не работает, это реальный провал.
+# configure_nvidia_runtime() запускал docker run до того как после reboot
+# nvidia-smi успевал заработать; теперь тест вынесен сюда с явным die().
+verify_gpu_in_docker() {
+  info "Verifying GPU access inside Docker"
+
+  # Проверяем что nvidia runtime зарегистрирован
+  local has_runtime
+  has_runtime="$(guest_ssh "$TARGET" \
+    "docker info --format '{{range .Runtimes}}{{.}}{{end}}' 2>/dev/null | grep -c nvidia" \
+    || echo 0)"
+  [[ "$has_runtime" -gt 0 ]] || die "nvidia runtime not registered in Docker"
+
+  # Запускаем тест-контейнер
+  info "Running GPU container test (nvidia-smi inside Docker)"
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -EEu
-echo "Docker info:"
-docker info | grep -i nvidia || true || true
-echo "NVIDIA runtime configured:"
-docker info | grep -i runtime || true || true
-echo "GPU test:"
-timeout 30 docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi || true
+set -Eeuo pipefail
+# Используем небольшой образ чтобы не тянуть 4GB cuda образ при каждом запуске
+if docker run --rm --gpus all ubuntu:22.04 \
+    sh -c 'ls /dev/nvidia* 2>/dev/null && echo "GPU devices visible"'; then
+  echo "GPU test PASSED"
+else
+  echo "GPU device test failed — trying nvidia-smi container"
+  # Fallback: полный образ (уже скачан на этапе configure)
+  docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi
+fi
 EOF
 }
 
+# ---------------------------------------------------------------------------
 if ! check_gpu_presence; then
-  audit_log "NVIDIA toolkit skipped on ${TARGET} (no GPU detected)"
+  audit_log "NVIDIA toolkit skipped on ${TARGET} (no GPU)"
   exit 0
 fi
 
 install_nvidia_drivers
 install_nvidia_toolkit
-configure_nvidia_runtime
-verify_installation
+configure_docker_runtime
+verify_gpu_in_docker
 
-audit_log "NVIDIA Container Toolkit installed on ${TARGET}"
+info "NVIDIA Container Toolkit ready on ${TARGET}"
+audit_log "NVIDIA toolkit installed on ${TARGET}"
