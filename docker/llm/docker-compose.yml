@@ -15,6 +15,9 @@ services:
       OLLAMA_HOST: 0.0.0.0:11434
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_NUM_THREADS: 4
+      OLLAMA_FLASH_ATTN: 1
 
     gpus: all
 
