@@ -95,9 +95,17 @@ RUNNING="$(sudo docker compose ps -q | wc -l)"
 [[ "$RUNNING" -gt 0 ]] || { echo "ERROR: no running containers"; exit 1; }
 
 echo "=== Health checks ==="
-timeout 20 curl -fsS http://localhost:9090/-/healthy && echo "Prometheus OK"
-timeout 20 curl -fsS http://localhost:9093/-/healthy && echo "Alertmanager OK"
-timeout 20 curl -fsS http://localhost:3000/api/health >/dev/null && echo "Grafana OK"
+
+# Prometheus (быстро готов)
+timeout 20 curl -fsS http://localhost:9090/-/healthy && echo "Prometheus OK" || echo "Prometheus: FAILED"
+
+# Alertmanager (быстро готов)
+timeout 20 curl -fsS http://localhost:9093/-/healthy && echo "Alertmanager OK" || echo "Alertmanager: FAILED"
+
+# Grafana (может занять ~30 секунд на старт)
+echo "Waiting for Grafana to be ready..."
+timeout 60 bash -c 'until curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; do sleep 2; done'
+echo "Grafana OK"
 EOF
 }
 
