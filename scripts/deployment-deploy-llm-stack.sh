@@ -96,7 +96,8 @@ timeout 30 curl -fsS http://localhost:11434/api/tags \
   && echo "Ollama API OK" || echo "WARN: Ollama not ready yet (may still be loading)"
 
 # Install default model if no models present
-if ! sudo docker compose exec -T ollama ollama list | grep -q .; then
+model_count="$(sudo docker compose exec -T ollama ollama list 2>/dev/null | tail -n +2 | wc -l)"
+if [[ "$model_count" -eq 0 ]]; then
   echo "No models found, installing llama3.2:1b..."
   sudo docker compose exec -T ollama ollama pull llama3.2:1b
   echo "Model installed"
