@@ -95,17 +95,75 @@ echo "=== Health checks ==="
 timeout 30 curl -fsS http://localhost:11434/api/tags \
   && echo "Ollama API OK" || echo "WARN: Ollama not ready yet (may still be loading)"
 
-# Install default model if no models present (7B model for 8GB GPU + 32GB RAM)
-model_count="$(sudo docker compose exec -T ollama ollama list 2>/dev/null | tail -n +2 | wc -l)"
-if [[ "$model_count" -eq 0 ]]; then
-  echo "No models found, installing mistral:7b (optimal for 8GB GPU)..."
-  sudo docker compose exec -T ollama ollama pull mistral:7b
-  echo "Model installed"
+# Installation logic for optimal model selection based on system resources
+# 8GB GPU + 32GB RAM → prefer GPU-capable 7B models
+# If no GPU → use CPU-optimized 3B models
+
+# ---------------------------------------------------------------------------
+install_models_if_needed() {
+  info "Checking GPU availability and installing optimal models"
+
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+
+# Check GPU availability via nvidia-smi
+if /usr/bin/nvidia-smi -L >/dev/null 2>&1; then
+  echo "GPU detected - installing mistral:7b (GPU-optimized 7B model)"
+  
+  # Pull GPU-optimized model (7B fits in 8GB VRAM with ~1GB headroom)
+  if ! /usr/bin/ollama list 2>/dev/null | tail -n +2 | grep -q "mistral:7b"; then
+    /usr/bin/ollama pull mistral:7b
+    echo "Model mistral:7b installed"
+  else
+    echo "Model mistral:7b already present"
+  fi
+  
+  # Optional: pull llama3.2:3b as backup for CPU fallback
+  echo "Installing llama3.2:3b as CPU fallback model..."
+  if ! /usr/bin/ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
+    /usr/bin/ollama pull llama3.2:3b
+    echo "Model llama3.2:3b installed"
+  else
+    echo "Model llama3.2:3b already present"
+  fi
+else
+  echo "No GPU detected - installing llama3.2:3b (CPU-optimized)"
+  
+  if ! /usr/bin/ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
+    /usr/bin/ollama pull llama3.2:3b
+    echo "Model llama3.2:3b installed"
+  else
+    echo "Model llama3.2:3b already present"
+  fi
 fi
+
+echo "Available models:"
+/usr/bin/ollama list
+EOF
+}
+
+# ---------------------------------------------------------------------------
+verify_deployment() {
+  info "Verifying LLM stack on ${TARGET}"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+set -Eeuo pipefail
+cd /opt/llm-stack
+echo "=== Container status ==="
+sudo docker compose ps
+
+RUNNING="$(sudo docker compose ps -q | wc -l)"
+[[ "$RUNNING" -gt 0 ]] || { echo "ERROR: no running containers"; exit 1; }
+
+echo "=== Health checks ==="
+timeout 30 curl -fsS http://localhost:11434/api/tags \
+  && echo "Ollama API OK" || echo "WARN: Ollama not ready yet (may still be loading)"
 
 timeout 15 curl -fsS http://localhost:3000/login >/dev/null \
   && echo "Open WebUI OK" || echo "WARN: WebUI not ready yet"
 EOF
+
+  # Install models after Ollama is healthy
+  install_models_if_needed
 }
 
 # ---------------------------------------------------------------------------
@@ -117,6 +175,7 @@ setup_remote_directory
 transfer_stack
 prepare_data_dirs
 deploy_stack
+install_models_if_needed
 verify_deployment
 
 info "LLM stack deployed:"
