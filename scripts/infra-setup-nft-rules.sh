@@ -86,7 +86,7 @@ table ip llm_lab_nat {
     type nat hook prerouting priority dstnat; policy accept;
     # DNAT: WAN-трафик на сервисные порты → nginx proxy.
     # nftables сохраняет оригинальный порт — одно правило вместо пяти.
-    iifname "${WAN_BRIDGE}" tcp dport { 3000, 8080, 9090, 9093, 11434 } \
+    iifname "${WAN_BRIDGE}" tcp dport { 80, 443, 3000, 8080, 9090, 9093, 11434 } \
       dnat to ${NGINX_IP}
   }
 
@@ -109,7 +109,7 @@ table inet llm_lab_filter {
     ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" accept
 
     # 3. WAN → nginx (после DNAT).
-    ip daddr ${NGINX_IP} tcp dport { 3000, 8080, 9090, 9093, 11434 } accept
+    ip daddr ${NGINX_IP} tcp dport { 80, 443, 3000, 8080, 9090, 9093, 11434 } accept
 
     # 4. nginx → LLM VM.
     ip saddr ${NGINX_IP} ip daddr ${LLM_IP} tcp dport { 3000, 11434 } accept
@@ -174,7 +174,9 @@ verify_ruleset() {
 
 print_summary() {
   local pub="${PROXMOX_HOST:-<proxmox-ip>}"
-  info "DNAT: ${pub}:{3000,8080,9090,9093,11434} → ${NGINX_IP}"
+  info "DNAT: ${pub}:{80,443,3000,8080,9090,9093,11434} → ${NGINX_IP}"
+  info "  :80    HTTP redirect (→ HTTPS)"
+  info "  :443   HTTPS unified entry"
   info "  :3000  Grafana  |  :8080  Open WebUI  |  :9090  Prometheus"
   info "  :9093  Alertmanager  |  :11434  Ollama API"
 }

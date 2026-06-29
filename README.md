@@ -115,11 +115,11 @@ cd /root/llm-lab
 
 | Сервис | VM | Локальный порт | Внешний (через nginx) | Аутентификация |
 |--------|-----|----------------|----------------------|----------------|
-| OpenWebUI | LLM (10.10.10.50) | 3000→8080 | `http://77.50.132.85:8080` | guest / guest (смените!) |
-| Ollama API | LLM (10.10.10.50) | 11434 | `http://77.50.132.85:11434` | Без auth |
-| Prometheus | Monitoring (10.10.10.60) | 9090 | `http://77.50.132.85:9090` | Без auth |
-| Grafana | Monitoring (10.10.10.60) | 3000 | `http://77.50.132.85:3000` | admin / admin (смените!) |
-| Alertmanager | Monitoring (10.10.10.60) | 9093 | `http://77.50.132.85:9093` | Без auth |
+| OpenWebUI | LLM (10.10.10.50) | 3000 | `https://77.50.132.85/` | guest / guest (смените!) |
+| Ollama API | LLM (10.10.10.50) | 11434 | `https://77.50.132.85/ollama/` | Без auth |
+| Prometheus | Monitoring (10.10.10.60) | 9090 | `https://77.50.132.85/prometheus/` | Без auth |
+| Grafana | Monitoring (10.10.10.60) | 3000 | `https://77.50.132.85/grafana/` | admin / admin (смените!) |
+| Alertmanager | Monitoring (10.10.10.60) | 9093 | `https://77.50.132.85/alertmanager/` | Без auth |
 | Node Exporter | LLM (10.10.10.50) | 9100 | — | — |
 | DCGM Exporter | LLM (10.10.10.50) | 9400 | — | — |
 
@@ -127,9 +127,11 @@ cd /root/llm-lab
 
 **Firewall Whitelist:**
 - nftables единый ruleset (`inet llm_lab_filter`)
-- LLM VM → порты 3000, 11434 inbound (через DNAT nginx → 10.10.10.70)
-- Monitoring VM → порты 3000, 9090, 9100, 9093 inbound
-- Интер VM трафик запрещен (кроме разрешенных скринингов)
+- HTTPS (443) через DNAT → nginx proxy (10.10.10.70)
+- HTTP (80) перенаправляется на HTTPS
+- OpenWebUI (3000), Ollama (11434) → LLM VM (10.10.10.50) через nginx
+- Prometheus (9090), Grafana (3000), Alertmanager (9093) → Monitoring VM (10.10.10.60) через nginx
+- Inter VM traffic запрещен (кроме разрешенного в firewall)
 - Outbound NAT (masquerade) для интернет
 
 **Docker Security:**

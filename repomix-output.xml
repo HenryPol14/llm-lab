@@ -70,6 +70,7 @@ patches/01_infra_yaml.patch
 README.md
 scripts/00-bootstrap-remote.sh
 scripts/configure-gitlab-ci.sh
+scripts/debug-gpu-vm.sh
 scripts/debug-nft.sh
 scripts/debug-vars.sh
 scripts/deployment-check-llm-vm-quick.sh
@@ -88,6 +89,7 @@ scripts/infra-install-proxmox-tools.sh
 scripts/infra-setup-logging.sh
 scripts/infra-setup-nft-rules.sh
 scripts/lib/common.sh
+scripts/ollama-setup-models.sh
 scripts/proxy-deploy-nginx-proxy.sh
 scripts/run-all.sh
 scripts/vm-create-cloudinit-template.sh
@@ -633,31 +635,6 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox-exporter:9115
-</file>
-
-<file path="scripts/debug-nft.sh">
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/lib/common.sh"
-load_config
-
-# Set defaults if not loaded
-LLM_IP="${LLM_IP:-10.10.10.50}"
-MONITORING_IP="${MONITORING_IP:-10.10.10.60}"
-NGINX_IP="${NGINX_IP:-10.10.10.70}"
-INTERNAL_SUBNET="${INTERNAL_SUBNET:-10.10.10.0/24}"
-WAN_BRIDGE="${WAN_BRIDGE:-vmbr0}"
-
-cat << EOF
-table ip test_nat {
-  chain prerouting {
-    type nat hook prerouting priority dstnat; policy accept;
-    iifname "${WAN_BRIDGE}" tcp dport 3000 dnat to "${NGINX_IP}:3000"
-  }
-}
-EOF
 </file>
 
 <file path="SKILL.md">
@@ -1448,6 +1425,173 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINyZN9mq2zd5ez2s7d9LeesRFFrnun2pyfI+MwKxvQe7
    lxc_template: "local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
 </file>
 
+<file path="scripts/debug-gpu-vm.sh">
+#!/usr/bin/env bash
+# Диагностика GPU в LLM VM — запускать с Proxmox хоста
+# Использование: bash debug-gpu-vm.sh [IP]
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
+
+TARGET="${1:-${LLM_IP:-10.10.10.50}}"
+
+echo "============================================================"
+echo " GPU DIAGNOSTICS ON ${TARGET}"
+echo "============================================================"
+
+run() { echo -e "\n--- $1 ---"; guest_ssh "$TARGET" "$2" 2>&1 || echo "FAILED: $2"; }
+
+run "NVIDIA devices in /dev" \
+    "ls -la /dev/nvidia* 2>/dev/null || echo 'NO /dev/nvidia* devices!'"
+
+run "Kernel modules" \
+    "lsmod | grep -E 'nvidia|nouveau' || echo 'No nvidia/nouveau modules loaded'"
+
+run "nvidia-smi" \
+    "sudo nvidia-smi 2>&1 | head -20"
+
+run "nvidia-smi driver version" \
+    "sudo nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo 'nvidia-smi failed'"
+
+run "cgroup version" \
+    "mount | grep cgroup | head -5"
+
+run "cgroup v2 unified?" \
+    "cat /proc/mounts | grep -c cgroup2 && echo 'cgroup v2 active' || echo 'cgroup v1 or mixed'"
+
+run "systemd cgroup setting" \
+    "cat /proc/cmdline | tr ' ' '\n' | grep -i cgroup || echo 'no cgroup cmdline override'"
+
+run "Docker info: runtime + cgroup" \
+    "docker info 2>/dev/null | grep -E 'Runtime|Cgroup|Default Runtime' || echo 'docker info failed'"
+
+run "Docker daemon.json" \
+    "cat /etc/docker/daemon.json 2>/dev/null || echo 'no daemon.json'"
+
+run "nvidia-container-cli version" \
+    "nvidia-container-cli --version 2>/dev/null || echo 'not found'"
+
+run "nvidia-container-cli info (raw)" \
+    "sudo nvidia-container-cli --load-kmods info 2>&1 | head -20"
+
+run "nvidia-ctk version" \
+    "nvidia-ctk --version 2>/dev/null || echo 'not found'"
+
+run "nvidia runtime config" \
+    "cat /etc/docker/daemon.json 2>/dev/null | grep -A5 nvidia || echo 'no nvidia in daemon.json'"
+
+run "docker run test (no GPU — sanity check)" \
+    "docker run --rm alpine echo 'plain docker works'"
+
+run "docker run --gpus all (verbose error)" \
+    "docker run --rm --gpus all ubuntu:22.04 echo 'gpu ok' 2>&1 || true"
+
+run "nvidia-container-cli standalone test" \
+    "sudo nvidia-container-cli --load-kmods --debug configure --ldconfig=@/sbin/ldconfig.real --no-cgroups --device=all --require=cuda /tmp 2>&1 | head -10 || true"
+
+echo ""
+echo "============================================================"
+echo " KEY THINGS TO CHECK:"
+echo "  1. /dev/nvidia* exists?"
+echo "  2. cgroup v2 active? (cgroup2 in mounts)"
+echo "  3. Driver version matches cuda:11.6.2 requirement (>=510)?"
+echo "  4. nvidia-container-cli --load-kmods info: any errors?"
+echo "============================================================"
+</file>
+
+<file path="scripts/debug-nft.sh">
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh"
+load_config
+
+# Set defaults if not loaded
+LLM_IP="${LLM_IP:-10.10.10.50}"
+MONITORING_IP="${MONITORING_IP:-10.10.10.60}"
+NGINX_IP="${NGINX_IP:-10.10.10.70}"
+INTERNAL_SUBNET="${INTERNAL_SUBNET:-10.10.10.0/24}"
+WAN_BRIDGE="${WAN_BRIDGE:-vmbr0}"
+
+cat << EOF
+table ip test_nat {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    iifname "${WAN_BRIDGE}" tcp dport 3000 dnat to "${NGINX_IP}:3000"
+  }
+}
+EOF
+</file>
+
+<file path="scripts/ollama-setup-models.sh">
+#!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
+# Описание: Настраивает диспетчеризацию моделей в Ollama для CPU/GPU распределения.
+#   Маленькие модели (<7B) запускаются на GPU, большие — на CPU при нехватке VRAM.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
+
+TARGET="${1:-${LLM_IP:-}}"
+[[ -n "$TARGET" ]] || die "Target IP required. Usage: $0 <IP>"
+
+mark_step "Configuring Ollama model dispatch on ${TARGET}"
+
+wait_for_ssh "$TARGET" 240
+ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
+ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+configure_model_dispatch() {
+  info "Configuring model dispatch (GPU for 7B models, CPU fallback)"
+  
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+
+cd /opt/llm-stack
+
+# Проверить наличие GPU
+if /usr/bin/nvidia-smi -L >/dev/null 2>&1; then
+  echo "GPU detected:"
+  /usr/bin/nvidia-smi -L
+  
+  # Установить переменные окружения для GPU использования
+  # OLLAMA_GPU_OVERLAP: коэффициент параллелизма GPU (0.7 = 70% VRAM)
+  export OLLAMA_GPU_OVERLAP=0.7
+  export OLLAMA_MAX_MEMORY="6G"  # Оставить 2GB для системы
+  
+  echo "GPU environment variables set:"
+  echo "  OLLAMA_GPU_OVERLAP=0.7"
+  echo "  OLLAMA_MAX_MEMORY=6G"
+  
+  # Модель mistral:7b — использует GPU автоматически (7B fits in 8GB VRAM)
+  echo "Model mistral:7b will use GPU automatically"
+else
+  echo "No GPU detected - all models will use CPU"
+  
+  # Для CPU: использовать больше потоков
+  export OLLAMA_NUM_THREADS=4
+  echo "CPU environment variables set:"
+  echo "  OLLAMA_NUM_THREADS=4"
+fi
+
+# Показать текущие модели
+echo ""
+echo "Installed models:"
+docker compose exec -T ollama /bin/ollama list
+
+echo ""
+echo "Model dispatch configuration complete."
+echo "Models are dispatched automatically based on size and VRAM availability."
+echo "For GPU models: use 'OLLAMA_GPU_OVERLAP=0.7' for 70% VRAM usage."
+echo "For CPU models: use 'OLLAMA_NUM_THREADS=4' for 4 CPU cores."
+EOF
+}
+
+# ---------------------------------------------------------------------------
+configure_model_dispatch
+info "Ollama model dispatch configured on ${TARGET}"
+</file>
+
 <file path=".gitignore">
 ai_plugin/
 ai_plugin_test/
@@ -1535,6 +1679,146 @@ echo ""
 echo "=== End of diagnostics ==="
 </file>
 
+<file path="docker/llm/docker-compose.yml">
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+
+    ports:
+      - "11434:11434"
+
+    volumes:
+      - /mnt/data/ollama:/root/.ollama
+
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_NUM_THREADS: 4
+      OLLAMA_FLASH_ATTN: 1
+
+    gpus: all
+
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: 3
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: false
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+    ports:
+      - "3000:8080"
+
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      DATA_DIR: /app/backend/data
+
+    volumes:
+      - /mnt/data/openwebui:/app/backend/data
+    healthcheck:
+      disable: true
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: 3
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: false
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+
+    pid: host
+
+    ports:
+      - "9100:9100"
+
+    volumes:
+      - /:/host:ro,rslave
+    healthcheck:
+      disable: true
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: 2
+
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+
+    read_only: true
+
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:latest
+    container_name: dcgm-exporter
+    restart: unless-stopped
+
+    ports:
+      - "9400:9400"
+
+    cap_add:
+      - SYS_ADMIN
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+    gpus: all
+
+    healthcheck:
+      disable: true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: 2
+
+    security_opt:
+      - no-new-privileges:true
+
+    read_only: false
+
+networks:
+  default:
+    name: llm-network
+    driver: bridge
+</file>
+
 <file path="scripts/configure-gitlab-ci.sh">
 #!/bin/bash
 # Script to configure GitLab CI/CD variables for llm-lab project
@@ -1590,320 +1874,6 @@ echo "NGINX_IP: ${NGINX_IP:-empty}"
 echo "NGINX_WAN_IP: ${NGINX_WAN_IP:-empty}"
 echo "INTERNAL_SUBNET: ${INTERNAL_SUBNET:-empty}"
 echo "WAN_BRIDGE: ${WAN_BRIDGE:-empty}"
-</file>
-
-<file path="scripts/deployment-deploy-llm-stack.sh">
-#!/usr/bin/env bash
-# shellcheck source=./lib/common.sh
-# Описание: Устанавливает LLM стек (Ollama + OpenWebUI + exporters) в контейнерах.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-TARGET="${1:-${LLM_IP:-}}"
-if [[ -z "$TARGET" ]]; then
-  die "Target IP required"
-fi
-REMOTE_STACK="/opt/llm-stack"
-mark_step "Deploying LLM stack to ${TARGET}"
-wait_for_ssh "$TARGET" 240
-
-prepare_data_dirs() {
-  info "Preparing data directories on ${TARGET}"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
-set -Eeuo pipefail
-sudo mkdir -p /mnt/data/ollama
-sudo mkdir -p /mnt/data/models
-sudo mkdir -p /mnt/data/openwebui
-sudo mkdir -p /mnt/data/docker
-sudo chown -R ${GUEST_USER}:${GUEST_USER} /mnt/data/ollama /mnt/data/models /mnt/data/openwebui
-echo "Data directories prepared"
-EOF
-}
-
-setup_remote_directory() {
-  guest_ssh "$TARGET" \
-    "sudo mkdir -p \"${REMOTE_STACK}\" && sudo chown \"${GUEST_USER}:${GUEST_USER}\" \"${REMOTE_STACK}\""
-}
-
-render_compose_config() {
-  info "Rendering docker-compose config"
-  cp -R "${PROJECT_ROOT}/docker/llm/." "${TMP_DIR}/"
-  sed -i "s/{{LLM_IP}}/${LLM_IP:-10.10.10.50}/g" "${TMP_DIR}/docker-compose.yml" 2>/dev/null || true
-}
-
-transfer_stack() {
-  local tmp_dir="$1"
-  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
-  info "Transferring LLM stack"
-  scp -r ${opts} \
-    "${tmp_dir}/." \
-    "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/" || true
-}
-
-check_existing_containers() {
-  local existing
-  existing="$(guest_ssh "$TARGET" \
-    "cd ${REMOTE_STACK} && sudo docker compose ps -q 2>/dev/null | wc -l || true" || true)"
-  if [[ "$existing" -gt 0 ]]; then
-    info "Existing containers detected, updating..."
-    return 0
-  fi
-  info "No existing containers found"
-  return 1
-}
-
-deploy_stack() {
-  info "Deploying LLM stack"
-  guest_ssh "$TARGET" "
-set -Eeuo pipefail || true
-cd ${REMOTE_STACK}
-sudo docker compose pull || true
-sudo docker compose up -d --remove-orphans || true
-"
-}
-
-verify_deployment() {
-  info "Verifying deployment"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
-set -Eeuo pipefail
-cd /opt/llm-stack
-echo "Container status:"
-sudo docker compose ps
-echo
-echo "Checking Ollama API..."
-timeout 15 curl -fsS http://localhost:11434/api/tags || true
-echo
-echo "Checking OpenWebUI..."
-timeout 15 curl -fsS http://localhost:3000/login >/dev/null || true
-echo
-echo "LLM stack is healthy"
-EOF
-}
-
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-render_compose_config
-setup_remote_directory
-transfer_stack "$TMP_DIR"
-prepare_data_dirs
-check_existing_containers || info "No existing containers found"
-deploy_stack
-verify_deployment
-
-audit_log "LLM stack deployed to ${TARGET}"
-</file>
-
-<file path="scripts/deployment-install-guest-runtime.sh">
-#!/usr/bin/env bash
-# shellcheck source=./lib/common.sh
-# Описание: Устанавливает Docker runtime внутри гостевой VM (LLM или Monitoring).
-# Заменяет два идентичных скрипта: deployment-install-guest-runtime-llm.sh
-# и deployment-install-guest-runtime-monitoring.sh
-#
-# Использование:
-#   deployment-install-guest-runtime.sh <IP>
-#   deployment-install-guest-runtime.sh 10.10.10.50   # LLM VM
-#   deployment-install-guest-runtime.sh 10.10.10.60   # Monitoring VM
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-
-TARGET="${1:-}"
-if [[ -z "$TARGET" ]]; then
-  die "Target IP required. Usage: $0 <IP>"
-fi
-
-mark_step "Installing guest Docker runtime on ${TARGET}"
-
-wait_for_ssh "$TARGET" 240
-
-ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
-mkdir -p "$HOME/.ssh"
-ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
-
-REMOTE_DOCKER_ROOT="/mnt/data/docker"
-REMOTE_OLLAMA_ROOT="/mnt/data/ollama"
-REMOTE_MODELS_ROOT="/mnt/data/models"
-
-verify_data_mount() {
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail || true
-mountpoint -q /mnt/data || true
-test -d /mnt/data/docker || true
-EOF
-}
-
-install_docker_packages() {
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail
-sudo apt-get update -qq
-
-if ! docker compose version >/dev/null 2>&1; then
-  if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2
-  elif apt-cache show docker-compose-plugin >/dev/null 2>&1; then
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
-  else
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose
-  fi
-fi
-
-echo "Docker Compose verified: $(docker compose version)"
-EOF
-}
-
-confirm_docker_data_migration() {
-  local current_root
-  current_root="$(guest_ssh "$TARGET" 'docker info --format "{{.DockerRootDir}}"' 2>/dev/null || echo "")"
-  if [[ "$current_root" == "$REMOTE_DOCKER_ROOT" ]]; then
-    info "Docker Root Dir already at $REMOTE_DOCKER_ROOT"
-    return 0
-  fi
-
-  warn "Current Docker Root Dir: ${current_root:-/var/lib/docker}"
-  info "Target Docker Root Dir: $REMOTE_DOCKER_ROOT"
-
-  local has_existing_data
-  has_existing_data="$(guest_ssh "$TARGET" \
-    'test -d /var/lib/docker && test -n "$(sudo find /var/lib/docker -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" && echo yes || echo no' \
-    || echo no)"
-  if [[ "$has_existing_data" != "yes" ]]; then
-    info "No existing Docker data to migrate"
-    return 0
-  fi
-
-  if [[ "${MIGRATE_DOCKER_DATA:-1}" != "1" ]]; then
-    info "Skipping migration. Use MIGRATE_DOCKER_DATA=1 to enable."
-    return 1
-  fi
-
-  if [[ "${CONFIRM_DOCKER_MIGRATION:-no}" != "yes" ]]; then
-    if [[ ! -t 0 ]]; then
-      die "Non-interactive: Docker data migration requires CONFIRM_DOCKER_MIGRATION=yes"
-    fi
-    local confirm
-    read -r -p "Confirm Docker data migration to $REMOTE_DOCKER_ROOT? [yes/no]: " confirm || true
-    [[ "$confirm" == "yes" ]] || die "Aborted by user"
-  fi
-
-  return 0
-}
-
-stop_docker_safely() {
-  info "Stopping Docker services"
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail
-sudo systemctl stop docker || true
-sudo systemctl stop containerd || true
-i=0
-while sudo systemctl is-active --quiet docker 2>/dev/null; do
-  i=$((i+1))
-  (( i > 30 )) && { echo "Timeout waiting docker to stop"; exit 1; }
-  sleep 1
-done
-echo "Docker stopped"
-EOF
-}
-
-prepare_docker_dirs() {
-  # FIX: REMOTE_* переменные передаём явно, чтобы они были доступны в remote bash
-  guest_ssh "$TARGET" bash -s -- "$REMOTE_DOCKER_ROOT" "$REMOTE_OLLAMA_ROOT" "$REMOTE_MODELS_ROOT" <<'EOF'
-set -Eeuo pipefail
-REMOTE_DOCKER_ROOT="$1"
-REMOTE_OLLAMA_ROOT="$2"
-REMOTE_MODELS_ROOT="$3"
-sudo mkdir -p "$REMOTE_DOCKER_ROOT" "$REMOTE_OLLAMA_ROOT" "$REMOTE_MODELS_ROOT"
-echo "Directories prepared"
-EOF
-}
-
-copy_docker_data() {
-  info "Copying Docker data to $REMOTE_DOCKER_ROOT"
-  guest_ssh "$TARGET" bash -s -- "$REMOTE_DOCKER_ROOT" <<'EOF'
-set -Eeuo pipefail
-REMOTE_DOCKER_ROOT="$1"
-if [[ -d /var/lib/docker ]] && [[ -n "$(ls -A /var/lib/docker 2>/dev/null)" ]]; then
-  echo "Copying data from /var/lib/docker..."
-  sudo rsync -aAX --delete /var/lib/docker/ "$REMOTE_DOCKER_ROOT"/
-  echo "Data copied"
-else
-  echo "No data to copy"
-fi
-EOF
-}
-
-configure_docker_daemon() {
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail
-sudo mkdir -p /etc/docker
-cat <<JSON | sudo tee /etc/docker/daemon.json
-{
-  "data-root": "/mnt/data/docker",
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "100m",
-    "max-file": "3"
-  },
-  "storage-driver": "overlay2"
-}
-JSON
-echo "Docker daemon config written"
-EOF
-}
-
-start_docker_safely() {
-  info "Starting Docker services"
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail
-sudo systemctl daemon-reload
-sudo systemctl enable docker containerd
-sudo systemctl start containerd
-sleep 2
-sudo systemctl start docker
-systemctl status docker --no-pager || true
-
-timeout=30
-until sudo docker info >/dev/null 2>&1; do
-  echo "Waiting for docker to be ready..."
-  sleep 2
-  ((timeout--))
-  (( timeout <= 0 )) && { echo "Docker failed to start"; exit 1; }
-done
-echo "Docker started successfully"
-EOF
-}
-
-verify_docker_config() {
-  info "Verifying Docker configuration"
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail
-echo "Docker Root Dir: $(docker info --format '{{.DockerRootDir}}')"
-echo "Docker Compose: $(docker compose version)"
-echo "Disk usage:"; df -h
-EOF
-}
-
-grant_docker_access() {
-  # FIX: GUEST_USER передаём явно как аргумент
-  guest_ssh "$TARGET" bash -s -- "${GUEST_USER:-ubuntu}" <<'EOF'
-set -Eeuo pipefail
-sudo usermod -aG docker "$1"
-echo "User $1 added to docker group"
-EOF
-}
-
-verify_data_mount
-install_docker_packages
-
-if confirm_docker_data_migration; then
-  stop_docker_safely
-  prepare_docker_dirs
-  copy_docker_data
-  configure_docker_daemon
-  start_docker_safely
-  verify_docker_config
-  grant_docker_access
-fi
-
-audit_log "Guest Docker runtime installed on ${TARGET}"
 </file>
 
 <file path="scripts/deployment-test-config-regressions.sh">
@@ -2684,143 +2654,6 @@ curl http://10.10.10.60:3000/api/health
 Главная идея: сначала довести до зелёного состояния host/network/template, потом VM, потом Docker stack. run-all.sh лучше запускать только после того, как отдельные шаги уже один раз прошли.
 </file>
 
-<file path="docker/llm/docker-compose.yml">
-services:
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    restart: unless-stopped
-
-    ports:
-      - "11434:11434"
-
-    volumes:
-      - /mnt/data/ollama:/root/.ollama
-
-    environment:
-      OLLAMA_HOST: 0.0.0.0:11434
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-
-    gpus: all
-
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-    logging:
-      driver: json-file
-      options:
-        max-size: 100m
-        max-file: 3
-
-    security_opt:
-      - no-new-privileges:true
-
-    read_only: false
-
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: open-webui
-    restart: unless-stopped
-
-    depends_on:
-      ollama:
-        condition: service_healthy
-
-    ports:
-      - "3000:8080"
-
-    environment:
-      OLLAMA_BASE_URL: http://ollama:11434
-      DATA_DIR: /app/backend/data
-
-    volumes:
-      - /mnt/data/openwebui:/app/backend/data
-    healthcheck:
-      disable: true
-    logging:
-      driver: json-file
-      options:
-        max-size: 100m
-        max-file: 3
-
-    security_opt:
-      - no-new-privileges:true
-
-    read_only: false
-
-  node-exporter:
-    image: prom/node-exporter:latest
-    container_name: node-exporter
-    restart: unless-stopped
-
-    command:
-      - --path.rootfs=/host
-      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
-
-    pid: host
-
-    ports:
-      - "9100:9100"
-
-    volumes:
-      - /:/host:ro,rslave
-    healthcheck:
-      disable: true
-    logging:
-      driver: json-file
-      options:
-        max-size: 50m
-        max-file: 2
-
-    security_opt:
-      - no-new-privileges:true
-      - apparmor:docker-default
-
-    read_only: true
-
-  dcgm-exporter:
-    image: nvcr.io/nvidia/k8s/dcgm-exporter:latest
-    container_name: dcgm-exporter
-    restart: unless-stopped
-
-    ports:
-      - "9400:9400"
-
-    cap_add:
-      - SYS_ADMIN
-
-    environment:
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-
-    gpus: all
-
-    healthcheck:
-      disable: true
-
-    logging:
-      driver: json-file
-      options:
-        max-size: 50m
-        max-file: 2
-
-    security_opt:
-      - no-new-privileges:true
-
-    read_only: false
-
-networks:
-  default:
-    name: llm-network
-    driver: bridge
-</file>
-
 <file path="scripts/00-bootstrap-remote.sh">
 #!/usr/bin/env bash
 # Описание: Скрипт для первоначальной настройки репозитория и окружения на удалённом хосте.
@@ -3396,124 +3229,208 @@ fi
 audit_log "Guest Docker runtime installed on ${TARGET}"
 </file>
 
-<file path="scripts/deployment-install-nvidia-toolkit-llm.sh">
+<file path="scripts/deployment-install-guest-runtime.sh">
 #!/usr/bin/env bash
 # shellcheck source=./lib/common.sh
-# Описание: Устанавливает NVIDIA Container Toolkit внутри гостевой VM.
-# Комментарий добавлен автоматически — дополните при необходимости.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
-load_config                                           # загружаем конфигурацию проекта
+# Описание: Устанавливает Docker runtime внутри гостевой VM.
+#   Заменяет два идентичных файла:
+#     deployment-install-guest-runtime-llm.sh
+#     deployment-install-guest-runtime-monitoring.sh
+#
+# Использование:
+#   deployment-install-guest-runtime.sh <IP>
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
 
-TARGET="${1:-${LLM_IP:-${MONITORING_IP:-}}}"          # IP целевой VM для установки NVIDIA toolkit
-if [[ -z "$TARGET" ]]; then
-  die "Target IP required"
-fi
+TARGET="${1:?Target IP required. Usage: $0 <IP>}"
 
-mark_step "Installing NVIDIA Container Toolkit on ${TARGET}"
+mark_step "Installing Docker runtime on ${TARGET}"
 
 wait_for_ssh "$TARGET" 240
-
-# Очищаем устаревший ключ хоста — VM могла пересоздаваться
 ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
-mkdir -p "$HOME/.ssh"
 ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-check_gpu_presence() {
-  local gpu_count
-  gpu_count="$(guest_ssh "$TARGET" 'lspci | grep -i nvidia | wc -l' 2>/dev/null || echo "0")" || true  # проверяем наличие NVIDIA GPU внутри гостя
-  if [[ "$gpu_count" -eq "0" ]]; then
-    info "No NVIDIA GPU detected in guest, skipping NVIDIA toolkit"
-    return 1
-  fi
-  info "Detected $gpu_count NVIDIA GPU(s) in guest"
-  return 0
+REMOTE_DOCKER_ROOT="/mnt/data/docker"
+REMOTE_MODELS_ROOT="/mnt/data/models"
+REMOTE_OLLAMA_ROOT="/mnt/data/ollama"
+
+# ---------------------------------------------------------------------------
+verify_data_mount() {
+  info "Checking /mnt/data mount on ${TARGET}"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+mountpoint -q /mnt/data || { echo "WARN: /mnt/data is not a mountpoint"; exit 0; }
+echo "OK: /mnt/data is mounted"
+EOF
 }
 
-install_nvidia_drivers() {
-  info "Installing NVIDIA drivers"
+# ---------------------------------------------------------------------------
+install_docker_packages() {
+  info "Installing Docker Compose on ${TARGET}"
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
-# Устанавливаем ubuntu-drivers-common если не установлен
-if ! command -v ubuntu-drivers >/dev/null 2>&1; then
-  apt-get update -y >/dev/null 2>&1
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-drivers-common
-fi
+apt-get update -qq
 
-if ! /usr/bin/nvidia-smi >/dev/null 2>&1; then
-  ubuntu-drivers install || true
-else
-  echo "NVIDIA drivers already installed"
-  /usr/bin/nvidia-smi || true
-fi
-EOF
-
-  # Проверяем через sudo — nvidia-smi может быть не в PATH обычного пользователя
-  local smi_ok
-  smi_ok="$(guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L 2>/dev/null | wc -l' || echo "0")" || true || true
-  if [[ "$smi_ok" -eq 0 ]]; then
-    info "NVIDIA kernel module not loaded, rebooting VM..."
-    guest_ssh "$TARGET" 'sudo reboot' || true || true
-    sleep 15
-    wait_for_ssh "$TARGET" 180
-    ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true || true
-    ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true || true
-    guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi' || die "nvidia-smi failed after reboot"
-  fi
-  info "NVIDIA drivers OK"
-}
-
-install_nvidia_toolkit() {
-  info "Installing NVIDIA Container Toolkit"
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail || true
-if dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
-  echo "NVIDIA Container Toolkit already installed"
-else
-  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg || true
-  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null || true
-  sudo apt-get update -y >/dev/null 2>&1 || true
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit || true
-fi
-EOF
-}
-
-configure_nvidia_runtime() {
-  info "Configuring NVIDIA runtime for Docker"
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -Eeuo pipefail
-nvidia-ctk runtime configure --runtime=docker
-systemctl restart docker
-sleep 5
-docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi || true
-EOF
-}
-
-verify_installation() {
-  info "Verifying NVIDIA Container Toolkit installation"
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
-set -EEu
-echo "Docker info:"
-docker info | grep -i nvidia || true || true
-echo "NVIDIA runtime configured:"
-docker info | grep -i runtime || true || true
-echo "GPU test:"
-timeout 30 docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi || true
-EOF
-}
-
-if ! check_gpu_presence; then
-  audit_log "NVIDIA toolkit skipped on ${TARGET} (no GPU detected)"
+if docker compose version >/dev/null 2>&1; then
+  echo "Docker Compose already installed: $(docker compose version)"
   exit 0
 fi
 
-install_nvidia_drivers
-install_nvidia_toolkit
-configure_nvidia_runtime
-verify_installation
+for pkg in docker-compose-v2 docker-compose-plugin docker-compose; do
+  if apt-cache show "$pkg" >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+    break
+  fi
+done
 
-audit_log "NVIDIA Container Toolkit installed on ${TARGET}"
+docker compose version
+EOF
+}
+
+# ---------------------------------------------------------------------------
+configure_docker_daemon() {
+  info "Configuring Docker daemon (data-root=${REMOTE_DOCKER_ROOT})"
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+# идемпотентно: пишем только если data-root отличается или файла нет
+WANTED="/mnt/data/docker"
+CURRENT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo '')"
+if [[ "$CURRENT" == "$WANTED" ]]; then
+  echo "Docker Root Dir already at $WANTED"
+  exit 0
+fi
+
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<JSON
+{
+  "data-root": "/mnt/data/docker",
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "100m", "max-file": "3" },
+  "storage-driver": "overlay2"
+}
+JSON
+echo "daemon.json written"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+migrate_docker_data() {
+  # Нужна миграция только если есть старые данные не в целевом каталоге
+  local current_root
+  current_root="$(guest_ssh "$TARGET" \
+    "docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo ''" || echo "")"
+
+  if [[ "$current_root" == "$REMOTE_DOCKER_ROOT" ]]; then
+    info "Docker Root Dir already at $REMOTE_DOCKER_ROOT, skipping migration"
+    return 0
+  fi
+
+  local has_data
+  has_data="$(guest_ssh "$TARGET" \
+    'sudo find /var/lib/docker -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | wc -l' \
+    || echo 0)"
+
+  if [[ "$has_data" == "0" ]]; then
+    info "No existing Docker data to migrate"
+    return 0
+  fi
+
+  # Non-interactive: требуем явного флага
+  if [[ "${CONFIRM_DOCKER_MIGRATION:-no}" != "yes" ]]; then
+    if [[ ! -t 0 ]]; then
+      warn "Skipping Docker data migration (set CONFIRM_DOCKER_MIGRATION=yes to enable)"
+      return 0
+    fi
+    local ans
+    read -r -p "Migrate Docker data to $REMOTE_DOCKER_ROOT? [yes/no]: " ans || true
+    [[ "$ans" == "yes" ]] || { warn "Migration skipped by user"; return 0; }
+  fi
+
+  info "Stopping Docker before data migration"
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+systemctl stop docker || true
+systemctl stop containerd || true
+i=0
+while systemctl is-active --quiet docker 2>/dev/null; do
+  sleep 1; ((i++)); (( i > 30 )) && { echo "Timeout stopping Docker"; exit 1; }
+done
+EOF
+
+  info "Copying /var/lib/docker → $REMOTE_DOCKER_ROOT"
+  guest_ssh "$TARGET" bash -s -- "$REMOTE_DOCKER_ROOT" <<'EOF'
+set -Eeuo pipefail
+REMOTE_DOCKER_ROOT="$1"
+sudo mkdir -p "$REMOTE_DOCKER_ROOT"
+sudo rsync -aAX --delete /var/lib/docker/ "$REMOTE_DOCKER_ROOT"/
+echo "Migration done"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+start_docker() {
+  info "Starting Docker on ${TARGET}"
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+systemctl daemon-reload
+systemctl enable docker containerd
+systemctl start containerd
+sleep 2
+systemctl start docker
+
+timeout=30
+until docker info >/dev/null 2>&1; do
+  sleep 2; ((timeout--))
+  (( timeout <= 0 )) && { echo "Docker failed to start"; exit 1; }
+done
+echo "Docker started: $(docker info --format '{{.DockerRootDir}}')"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+prepare_data_dirs() {
+  info "Creating data directories on ${TARGET}"
+  # FIX: переменные передаём как аргументы, не через heredoc-интерполяцию
+  guest_ssh "$TARGET" bash -s -- \
+    "$REMOTE_DOCKER_ROOT" "$REMOTE_OLLAMA_ROOT" "$REMOTE_MODELS_ROOT" \
+    "${GUEST_USER:-ubuntu}" <<'EOF'
+set -Eeuo pipefail
+DOCKER_ROOT="$1" OLLAMA_ROOT="$2" MODELS_ROOT="$3" GUSER="$4"
+sudo mkdir -p "$DOCKER_ROOT" "$OLLAMA_ROOT" "$MODELS_ROOT"
+sudo chown -R "${GUSER}:${GUSER}" "$OLLAMA_ROOT" "$MODELS_ROOT"
+echo "Directories ready"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+grant_docker_access() {
+  # FIX: GUEST_USER передаём явно как аргумент
+  guest_ssh "$TARGET" bash -s -- "${GUEST_USER:-ubuntu}" <<'EOF'
+set -Eeuo pipefail
+sudo usermod -aG docker "$1" && echo "User $1 added to docker group"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+verify_docker() {
+  info "Verifying Docker on ${TARGET}"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+echo "Root:    $(docker info --format '{{.DockerRootDir}}')"
+echo "Compose: $(docker compose version)"
+echo "Disk:";  df -h /mnt/data
+EOF
+}
+
+# ---------------------------------------------------------------------------
+verify_data_mount
+install_docker_packages
+prepare_data_dirs
+migrate_docker_data
+configure_docker_daemon
+start_docker
+grant_docker_access
+verify_docker
+
+audit_log "Docker runtime installed on ${TARGET}"
 </file>
 
 <file path="scripts/deployment-test-provisioning.sh">
@@ -3822,115 +3739,6 @@ fi
 info "Expected WAN bridge: ${WAN_BRIDGE}"
 info "Expected internal bridge: ${INTERNAL_BRIDGE}"
 info "Expected internal subnet: ${INTERNAL_SUBNET}"
-</file>
-
-<file path="scripts/infra-configure-network.sh">
-#!/usr/bin/env bash
-# shellcheck source=./lib/common.sh
-# Описание: Настраивает сетевые мосты и правила фаервола на хосте.
-# Комментарий добавлен автоматически — дополните при необходимости.
-NFTABLES_DIR="${NFTABLES_DIR:-/etc/nftables.d}"
-NFTABLES_CONF="${NFTABLES_CONF:-/etc/nftables.conf}"
-
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"   # подключаем общие функции
-load_config                                           # загружаем конфигурацию проекта
-require_root                                          # проверяем права root
-
-mark_step "Configuring network and firewall with whitelist rules"  # фиксируем шаг в журнале
-
-require_cmd ip
-require_cmd nft
-
-setup_internal_bridge() {
-  info "Setting up internal bridge ${INTERNAL_BRIDGE}"
-  mkdir -p /etc/network/interfaces.d                             # создаем каталог для дополнительных сетевых конфигураций
-  cat >/etc/network/interfaces.d/llm-lab.cfg <<EOF
-auto ${INTERNAL_BRIDGE}
-iface ${INTERNAL_BRIDGE} inet static
-    address ${INTERNAL_CIDR}
-    bridge-ports none
-    bridge-stp off
-    bridge-fd 0
-EOF
-
-  if command -v ifreload >/dev/null 2>&1; then
-    ifreload -a || true
-  fi
-
-  if ! ip link show "$INTERNAL_BRIDGE" >/dev/null 2>&1; then
-    info "Creating bridge ${INTERNAL_BRIDGE}"
-    ip link add name "$INTERNAL_BRIDGE" type bridge
-  fi
-
-  ip link set "$INTERNAL_BRIDGE" up
-  if ! ip -4 addr show "$INTERNAL_BRIDGE" | grep -q "$INTERNAL_CIDR"; then
-    ip addr add "$INTERNAL_CIDR" dev "$INTERNAL_BRIDGE" 2>/dev/null || true
-  fi
-}
-
-enable_ip_forwarding() {
-  info "Enabling IP forwarding"
-  mkdir -p /etc/sysctl.d                                       # создаем директорию для системных параметров
-  cat >/etc/sysctl.d/99-llm-lab-forwarding.conf <<EOF
-net.ipv4.ip_forward=1
-EOF
-  sysctl --system >/dev/null                                   # применяем изменения сразу
-}
-
-create_firewall_whitelist() {
-  if [[ "${FIREWALL_ENABLED:-true}" != "true" ]]; then
-    warn "Firewall disabled by config, skipping"
-    return 0
-  fi
-
-  info "Creating firewall whitelist rules"
-  mkdir -p "$NFTABLES_DIR"
-
-  nftables_whitelist_config >"$NFTABLES_DIR/llm-lab.nft"
-
-  if ! grep -q "include \"$NFTABLES_DIR/*.nft\"" "$NFTABLES_CONF"; then
-    printf '\ninclude "%s/*.nft"\n' "$NFTABLES_DIR" >> "$NFTABLES_CONF"
-  fi
-}
-
-apply_firewall() {
-  info "Applying firewall rules"
-  systemctl enable --now nftables
-  nft -f "$NFTABLES_CONF"
-
-  info "Current nftables rules:"
-  nft list ruleset
-}
-
-verify_connectivity() {
-  info "Verifying connectivity to internal bridge"
-
-  if ! ip addr show "$INTERNAL_BRIDGE" >/dev/null 2>&1; then
-    warn "Bridge ${INTERNAL_BRIDGE} not configured"
-    return 1
-  fi
-
-  if ip -4 addr show "$INTERNAL_BRIDGE" | grep -q "$INTERNAL_CIDR"; then
-    info "Bridge ${INTERNAL_BRIDGE} has correct address ${INTERNAL_CIDR}"
-  else
-    warn "Bridge ${INTERNAL_BRIDGE} missing address ${INTERNAL_CIDR}"
-    return 1
-  fi
-
-  if nft list ruleset 2>/dev/null | grep -q "llm_lab_nat"; then
-    info "NAT rules are active"
-  else
-    warn "NAT rules not found (may be configured in separate ruleset)"
-  fi
-}
-
-setup_internal_bridge
-enable_ip_forwarding
-create_firewall_whitelist
-apply_firewall
-verify_connectivity
-
-audit_log "Network and firewall configured"
 </file>
 
 <file path="scripts/infra-install-proxmox-tools.sh">
@@ -4394,197 +4202,104 @@ echo "✓ Проверка Monitoring VM завершена"
 echo "══════════════════════════════════════════════════════════════="
 </file>
 
-<file path="scripts/deployment-deploy-monitoring-stack.sh">
+<file path="scripts/infra-configure-network.sh">
 #!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
+# Описание: Настраивает внутренний bridge и IP-forwarding на Proxmox-хосте.
+#
+#   ЧТО ДЕЛАЕТ ЭТОТ СКРИПТ:
+#     1. Создаёт bridge vmbr1 (INTERNAL_BRIDGE) с адресом INTERNAL_CIDR
+#     2. Включает net.ipv4.ip_forward
+#
+#   ЧТО НЕ ДЕЛАЕТ:
+#     - nftables правила — только infra-setup-nft-rules.sh
+#       (один авторитетный источник правил, нет конфликта таблиц)
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
-TARGET="${1:-${MONITORING_IP:-${LLM_IP:-}}}"
-if [[ -z "$TARGET" ]]; then
-  die "Target IP required"
-fi
-REMOTE_STACK="/opt/monitoring-stack"
-mark_step "Deploying monitoring stack to ${TARGET}"
-wait_for_ssh "$TARGET" 240
+require_root
+require_cmd ip
 
-prepare_data_dirs() {
-  info "Preparing data directories on ${TARGET}"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
-set -Eeuo pipefail
-sudo mkdir -p /mnt/data/prometheus
-sudo mkdir -p /mnt/data/grafana
-sudo mkdir -p /mnt/data/alertmanager
-# Prometheus и alertmanager работают от nobody (65534)
-sudo chown -R 65534:65534 /mnt/data/prometheus
-sudo chown -R 65534:65534 /mnt/data/alertmanager
-# Grafana работает от uid 472
-sudo chown -R 472:472 /mnt/data/grafana
-echo "Data directories prepared"
+mark_step "Configuring internal bridge and IP forwarding"
+
+# ---------------------------------------------------------------------------
+setup_internal_bridge() {
+  info "Setting up bridge ${INTERNAL_BRIDGE} with address ${INTERNAL_CIDR}"
+
+  # Запись в /etc/network/interfaces.d/ — персистентна после reboot
+  mkdir -p /etc/network/interfaces.d
+  cat > /etc/network/interfaces.d/llm-lab.cfg <<EOF
+auto ${INTERNAL_BRIDGE}
+iface ${INTERNAL_BRIDGE} inet static
+    address ${INTERNAL_CIDR}
+    bridge-ports none
+    bridge-stp off
+    bridge-fd 0
 EOF
-}
 
-render_prometheus_config() {
-  local target_dir="$1"
-  info "Rendering Prometheus configuration"
-  cp -R "${PROJECT_ROOT}/docker/monitoring/." "$target_dir/"
-  mkdir -p "$target_dir/prometheus"
-  sed \
-    -e "s/{{LLM_IP}}/${LLM_IP:-10.10.10.50}/g" \
-    -e "s/{{MONITORING_IP}}/${MONITORING_IP:-10.10.10.60}/g" \
-    "${PROJECT_ROOT}/monitoring/prometheus/prometheus.yml.tpl" \
-    > "${target_dir}/prometheus/prometheus.yml"
-}
+  # Применяем без перезагрузки
+  if command -v ifreload >/dev/null 2>&1; then
+    ifreload -a 2>/dev/null || true
+  fi
 
-validate_prometheus_files() {
-  local tmp_dir="$1"
-  local config_file="${tmp_dir}/prometheus/prometheus.yml"
-  info "Validating generated Prometheus configuration"
-  [[ -f "$config_file" ]] || die "Prometheus config not found: $config_file"
-  grep -q "${LLM_IP}" "$config_file" || die "LLM IP was not rendered into Prometheus config"
-  grep -q "${MONITORING_IP}" "$config_file" || die "Monitoring IP was not rendered into Prometheus config"
-  info "Prometheus configuration validated"
-}
+  # Создаём bridge если не существует
+  if ! ip link show "$INTERNAL_BRIDGE" >/dev/null 2>&1; then
+    ip link add name "$INTERNAL_BRIDGE" type bridge
+    info "Created bridge ${INTERNAL_BRIDGE}"
+  fi
 
-setup_remote_directory() {
-  guest_ssh "$TARGET" \
-    "sudo mkdir -p \"${REMOTE_STACK}\" && sudo chown \"${GUEST_USER}:${GUEST_USER}\" \"${REMOTE_STACK}\""
-}
+  ip link set "$INTERNAL_BRIDGE" up
 
-install_docker_compose() {
-  info "Checking Docker Compose on ${TARGET}"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
-set -Eeuo pipefail
-if docker compose version >/dev/null 2>&1; then
-  echo "Docker Compose already installed:"
-  docker compose version
-  exit 0
-fi
-
-echo "Installing Docker Compose v2"
-sudo apt-get update -qq
-sudo apt-get install -y docker-compose-v2
-docker compose version
-EOF
-}
-
-reboot_if_required() {
-  info "Checking if reboot is required"
-  local needs_reboot
-  needs_reboot="$(guest_ssh "$TARGET" 'bash -s' <<'EOF'
-if [[ -f /var/run/reboot-required ]]; then
-  cat /var/run/reboot-required.pkgs 2>/dev/null || true
-  echo REBOOT_REQUIRED
-fi
-EOF
-)"
-
-  if grep -q "REBOOT_REQUIRED" <<<"$needs_reboot"; then
-    info "Reboot required"
-    guest_ssh "$TARGET" "sudo reboot" || true
-    sleep 15
-    wait_for_ssh "$TARGET" 180
-    info "VM is back online"
+  # Назначаем адрес если ещё не назначен
+  if ! ip -4 addr show "$INTERNAL_BRIDGE" | grep -qF "${INTERNAL_CIDR}"; then
+    ip addr add "$INTERNAL_CIDR" dev "$INTERNAL_BRIDGE" 2>/dev/null || true
+    info "Assigned ${INTERNAL_CIDR} to ${INTERNAL_BRIDGE}"
   else
-    info "No reboot required"
+    info "Bridge ${INTERNAL_BRIDGE} already has ${INTERNAL_CIDR}"
   fi
 }
 
-grant_docker_access() {
-  guest_ssh "$TARGET" \
-    "sudo usermod -aG docker \"${GUEST_USER}\""
+# ---------------------------------------------------------------------------
+enable_ip_forwarding() {
+  info "Enabling IP forwarding"
+  mkdir -p /etc/sysctl.d
+  cat > /etc/sysctl.d/99-llm-lab-forwarding.conf <<'EOF'
+net.ipv4.ip_forward=1
+EOF
+  sysctl --system >/dev/null 2>&1
+  info "IP forwarding enabled"
 }
 
-transfer_stack() {
-  local tmp_dir="$1"
-  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
-  info "Transferring monitoring stack"
-  scp -r ${opts} \
-    "${tmp_dir}/." \
-    "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/" || true
-}
+# ---------------------------------------------------------------------------
+verify() {
+  info "Verifying bridge and forwarding"
 
-check_existing_containers() {
-  local existing
-  existing="$(guest_ssh "$TARGET" \
-    "cd ${REMOTE_STACK} && sudo docker compose ps 2>/dev/null || true" || true)"
-  if grep -Eq 'Up|running' <<<"$existing" || true; then
-    info "Existing containers detected"
-    return 0 || true
+  if ! ip link show "$INTERNAL_BRIDGE" >/dev/null 2>&1; then
+    die "Bridge ${INTERNAL_BRIDGE} missing after setup"
   fi
-  return 1 || true
+
+  if ip -4 addr show "$INTERNAL_BRIDGE" | grep -qF "$INTERNAL_CIDR"; then
+    info "✓ ${INTERNAL_BRIDGE} has ${INTERNAL_CIDR}"
+  else
+    warn "✗ ${INTERNAL_BRIDGE} missing ${INTERNAL_CIDR}"
+  fi
+
+  local fwd
+  fwd="$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 0)"
+  if [[ "$fwd" == "1" ]]; then
+    info "✓ IP forwarding enabled"
+  else
+    warn "✗ IP forwarding not active"
+  fi
+
+  info "Next step: run infra-setup-nft-rules.sh to configure NAT and firewall"
 }
 
-deploy_stack() {
-  info "Deploying monitoring stack"
-  guest_ssh "$TARGET" "
-set -Eeuo pipefail || true
-cd ${REMOTE_STACK}
-if sudo docker compose ps -q 2>/dev/null | grep -q .; then
-  info 'Monitoring stack already running. Skipping deployment.'
-  exit 0 || true
-fi
-sudo docker compose pull || true
-sudo docker compose up -d || true
-"
-}
+# ---------------------------------------------------------------------------
+setup_internal_bridge
+enable_ip_forwarding
+verify
 
-validate_running_prometheus() {
-  info "Validating Prometheus runtime configuration"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
-set -Eeuo pipefail
-cd /opt/monitoring-stack
-  if sudo docker compose ps | grep -q prometheus || true; then
-  sudo docker compose exec -T prometheus \
-    promtool check config /etc/prometheus/prometheus.yml
-fi
-EOF
-}
-
-verify_deployment() {
-  info "Verifying deployment"
-  guest_ssh "$TARGET" 'bash -s' <<'EOF'
-set -Eeuo pipefail
-cd /opt/monitoring-stack
-echo "Container status:"
-sudo docker compose ps
-RUNNING="$(sudo docker compose ps | grep -Ec 'Up|running' || true)"
-if [[ "$RUNNING" -eq 0 ]]; then
-  echo "No running containers found"
-  exit 1
-fi
-
-echo
-echo "Checking Prometheus"
-timeout 15 curl -fsS http://localhost:9090/-/healthy
-echo
-echo "Checking Grafana"
-timeout 15 curl -fsS http://localhost:3000/login >/dev/null
-echo
-echo "Monitoring stack is healthy"
-EOF
-}
-
-print_access_info() {
-  info "Monitoring stack deployed successfully"
-  info "Prometheus: http://${TARGET}:9090"
-  info "Grafana: http://${TARGET}:3000"
-}
-
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-render_prometheus_config "$TMP_DIR"
-validate_prometheus_files "$TMP_DIR"
-setup_remote_directory
-install_docker_compose
-reboot_if_required
-grant_docker_access
-check_existing_containers || info "No existing containers found"
-transfer_stack "$TMP_DIR"
-prepare_data_dirs 
-deploy_stack
-validate_running_prometheus
-verify_deployment
-print_access_info
-audit_log "Monitoring stack deployed to ${TARGET}"
+audit_log "Network bridge ${INTERNAL_BRIDGE} configured"
 </file>
 
 <file path="scripts/infra-enable-iommu.sh">
@@ -4865,153 +4580,6 @@ verify_nginx
 print_access_info
 
 audit_log "Nginx proxy LXC ${NGINX_CTID} deployed"
-</file>
-
-<file path="scripts/infra-setup-nft-rules.sh">
-#!/usr/bin/env bash
-# shellcheck source=./lib/common.sh
-# Описание: Настраивает nftables — NAT, DNAT, forward для llm-lab.
-# Заменяет дублированные и конкурирующие таблицы единым чистым ruleset.
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-load_config
-require_root
-require_cmd nft
-
-LLM_IP="${LLM_IP:-10.10.10.50}"
-MONITORING_IP="${MONITORING_IP:-10.10.10.60}"
-NGINX_IP="${NGINX_IP:-10.10.10.70}"
-INTERNAL_SUBNET="${INTERNAL_SUBNET:-10.10.10.0/24}"
-WAN_BRIDGE="${WAN_BRIDGE:-vmbr0}"
-
-# Debug: check variables
-echo "DEBUG: LLM_IP=$LLM_IP, MONITORING_IP=$MONITORING_IP, NGINX_IP=$NGINX_IP" >&2
-echo "DEBUG: INTERNAL_SUBNET=$INTERNAL_SUBNET, WAN_BRIDGE=$WAN_BRIDGE" >&2
-
-mark_step "Configuring nftables for llm-lab"
-
-backup_ruleset() {
-  local backup
-  backup="/etc/nftables-backup-$(date +%Y%m%d%H%M%S).conf"
-  nft list ruleset > "$backup"
-  info "Current ruleset backed up to ${backup}"
-}
-
-flush_lab_tables() {
-  info "Removing old lab tables"
-  for table in "inet llm_lab" "inet pve_lab" "ip nat"; do
-    nft delete table "$table" 2>/dev/null && info "Deleted table: $table" || true
-  done
-}
-
-apply_ruleset() {
-  info "Applying new nftables ruleset"
-  nft -f - << EOF
-# llm-lab nftables ruleset
-# NAT: masquerade для внутренней подсети + DNAT для nginx proxy
-
-table ip llm_lab_nat {
-
-  chain prerouting {
-    type nat hook prerouting priority dstnat; policy accept;
-
-    # DNAT: публичный IP → nginx proxy (10.10.10.70)
-    iifname "${WAN_BRIDGE}" tcp dport 3000  dnat to "${NGINX_IP}:3000"
-    iifname "${WAN_BRIDGE}" tcp dport 8080  dnat to "${NGINX_IP}:8080"
-    iifname "${WAN_BRIDGE}" tcp dport 9090  dnat to "${NGINX_IP}:9090"
-    iifname "${WAN_BRIDGE}" tcp dport 9093  dnat to "${NGINX_IP}:9093"
-    iifname "${WAN_BRIDGE}" tcp dport 11434 dnat to "${NGINX_IP}:11434"
-  }
-
-  chain postrouting {
-    type nat hook postrouting priority srcnat; policy accept;
-
-    # Masquerade для всей внутренней подсети
-    ip saddr "${INTERNAL_SUBNET}" oifname "${WAN_BRIDGE}" masquerade
-  }
-}
-
-table inet llm_lab_filter {
-
-  chain forward {
-    type filter hook forward priority filter; policy drop;
-
-    # Разрешаем установленные соединения
-    ct state established,related accept
-
-    # Внутренняя подсеть → интернет (через masquerade)
-    ip saddr "${INTERNAL_SUBNET}" oifname "${WAN_BRIDGE}" accept
-
-    # nginx proxy → LLM VM
-    ip saddr "${NGINX_IP}" ip daddr "${LLM_IP}" tcp dport { 3000, 11434 } accept
-
-    # nginx proxy → Monitoring VM
-    ip saddr "${NGINX_IP}" ip daddr "${MONITORING_IP}" tcp dport { 3000, 9090, 9093, 9100 } accept
-
-    # DNAT forwarding: входящий трафик к nginx
-    ip daddr "${NGINX_IP}" tcp dport { 3000, 8080, 9090, 9093, 11434 } accept
-
-    # Prometheus scraping: monitoring → llm node-exporter и gpu-exporter
-    ip saddr "${MONITORING_IP}" ip daddr "${LLM_IP}" tcp dport { 9100, 9400 } accept
-
-    # Запрет трафика между VM (кроме разрешённого выше)
-    ip saddr "${INTERNAL_SUBNET}" ip daddr "${INTERNAL_SUBNET}" ip daddr != "${INTERNAL_GATEWAY}" drop
-  }
-
-  chain input {
-    type filter hook input priority filter; policy accept;
-  }
-
-  chain output {
-    type filter hook output priority filter; policy accept;
-  }
-}
-EOF
-  info "nftables ruleset applied"
-}
-
-persist_ruleset() {
-  info "Persisting ruleset to /etc/nftables.conf"
-
-  # Сохраняем текущий ruleset (proxmox-firewall + наш)
-  # Пишем отдельный файл для llm-lab и включаем его из основного
-  nft list table ip llm_lab_nat > /etc/nftables-llm-lab.conf
-  nft list table inet llm_lab_filter >> /etc/nftables-llm-lab.conf
-
-  # Добавляем include в /etc/nftables.conf если его ещё нет
-  if ! grep -q "nftables-llm-lab" /etc/nftables.conf 2>/dev/null || true; then
-    echo 'include "/etc/nftables-llm-lab.conf"' >> /etc/nftables.conf
-    info "Added include to /etc/nftables.conf"
-  fi
-
-  # Включаем и перезапускаем сервис
-  systemctl enable nftables || true
-  info "nftables rules will persist across reboots"
-}
-
-verify_ruleset() {
-  info "Verifying ruleset"
-  nft list table ip llm_lab_nat
-  nft list table inet llm_lab_filter
-}
-
-print_summary() {
-  local pub_ip="${PROXMOX_HOST:-77.50.132.85}"
-  info "nftables configured:"
-  info "  DNAT ${pub_ip}:3000  → ${NGINX_IP}:3000  (Grafana)"
-  info "  DNAT ${pub_ip}:8080  → ${NGINX_IP}:8080  (Open WebUI)"
-  info "  DNAT ${pub_ip}:9090  → ${NGINX_IP}:9090  (Prometheus)"
-  info "  DNAT ${pub_ip}:9093  → ${NGINX_IP}:9093  (Alertmanager)"
-  info "  DNAT ${pub_ip}:11434 → ${NGINX_IP}:11434 (Ollama API)"
-}
-
-backup_ruleset
-flush_lab_tables
-apply_ruleset
-persist_ruleset
-verify_ruleset
-print_summary
-
-audit_log "nftables llm-lab rules applied"
 </file>
 
 <file path="scripts/vm-create-cloudinit-template.sh">
@@ -5336,6 +4904,346 @@ setup_ssh_access
 audit_log "Monitoring VM ${MONITORING_VMID} setup completed successfully"
 </file>
 
+<file path="scripts/deployment-deploy-monitoring-stack.sh">
+#!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
+# Описание: Разворачивает monitoring стек (Prometheus + Grafana + Alertmanager + node-exporter + blackbox)
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
+
+TARGET="${1:-${MONITORING_IP:-}}"
+[[ -n "$TARGET" ]] || die "Target IP required. Usage: $0 <IP>"
+
+REMOTE_STACK="/opt/monitoring-stack"
+
+mark_step "Deploying monitoring stack to ${TARGET}"
+wait_for_ssh "$TARGET" 240
+
+# ---------------------------------------------------------------------------
+render_prometheus_config() {
+  local tmp="$1"
+  info "Rendering Prometheus config"
+  cp -R "${PROJECT_ROOT}/docker/monitoring/." "$tmp/"
+  mkdir -p "$tmp/prometheus"
+  sed \
+    -e "s/{{LLM_IP}}/${LLM_IP:-10.10.10.50}/g" \
+    -e "s/{{MONITORING_IP}}/${MONITORING_IP:-10.10.10.60}/g" \
+    "${PROJECT_ROOT}/monitoring/prometheus/prometheus.yml.tpl" \
+    > "${tmp}/prometheus/prometheus.yml"
+
+  grep -q "${LLM_IP}" "${tmp}/prometheus/prometheus.yml" \
+    || die "LLM_IP not rendered into prometheus.yml"
+  info "prometheus.yml validated"
+}
+
+# ---------------------------------------------------------------------------
+setup_remote_directory() {
+  guest_ssh "$TARGET" bash -s -- "$REMOTE_STACK" "${GUEST_USER:-ubuntu}" <<'EOF'
+set -Eeuo pipefail
+sudo mkdir -p "$1"
+sudo chown "$2:$2" "$1"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+transfer_stack() {
+  local tmp="$1"
+  info "Transferring monitoring stack to ${TARGET}:${REMOTE_STACK}"
+  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
+  # shellcheck disable=SC2086
+  scp -r $opts "${tmp}/." "${GUEST_USER:-ubuntu}@${TARGET}:${REMOTE_STACK}/" \
+    || die "scp failed"
+}
+
+# ---------------------------------------------------------------------------
+prepare_data_dirs() {
+  info "Preparing data directories on ${TARGET}"
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+mkdir -p /mnt/data/prometheus /mnt/data/grafana /mnt/data/alertmanager
+chown -R 65534:65534 /mnt/data/prometheus /mnt/data/alertmanager  # nobody
+chown -R 472:472     /mnt/data/grafana                            # grafana uid
+echo "Data directories ready"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+deploy_stack() {
+  info "Deploying monitoring stack (idempotent)"
+
+  # FIX: идемпотентная проверка вынесена в shell-переменную ПЕРЕД heredoc,
+  # а не как 'exit 0' внутри remote bash (что завершало только remote bash,
+  # но не останавливало скрипт-обёртку)
+  local running
+  running="$(guest_ssh "$TARGET" \
+    "cd ${REMOTE_STACK} && sudo docker compose ps -q 2>/dev/null | wc -l" || echo 0)"
+
+  if [[ "$running" -gt 0 ]]; then
+    info "Monitoring stack already running (${running} containers) — pulling updates"
+    guest_ssh "$TARGET" "cd ${REMOTE_STACK} && sudo docker compose pull --quiet || true"
+    guest_ssh "$TARGET" "cd ${REMOTE_STACK} && sudo docker compose up -d --remove-orphans"
+  else
+    info "Starting monitoring stack for the first time"
+    guest_ssh "$TARGET" "cd ${REMOTE_STACK} && sudo docker compose pull --quiet || true"
+    guest_ssh "$TARGET" "cd ${REMOTE_STACK} && sudo docker compose up -d"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+verify_deployment() {
+  info "Verifying monitoring stack on ${TARGET}"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+set -Eeuo pipefail
+cd /opt/monitoring-stack
+echo "=== Container status ==="
+sudo docker compose ps
+
+RUNNING="$(sudo docker compose ps -q | wc -l)"
+[[ "$RUNNING" -gt 0 ]] || { echo "ERROR: no running containers"; exit 1; }
+
+echo "=== Health checks ==="
+
+# Prometheus (быстро готов)
+timeout 20 curl -fsS http://localhost:9090/-/healthy && echo "Prometheus OK" || echo "Prometheus: FAILED"
+
+# Alertmanager (быстро готов)
+timeout 20 curl -fsS http://localhost:9093/-/healthy && echo "Alertmanager OK" || echo "Alertmanager: FAILED"
+
+# Grafana (может занять ~30 секунд на старт)
+echo "Waiting for Grafana to be ready..."
+timeout 60 bash -c 'until curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; do sleep 2; done'
+echo "Grafana OK"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+render_prometheus_config "$TMP_DIR"
+setup_remote_directory
+transfer_stack "$TMP_DIR"
+prepare_data_dirs
+deploy_stack
+verify_deployment
+
+info "Monitoring stack deployed:"
+info "  Prometheus:   http://${TARGET}:9090"
+info "  Grafana:      http://${TARGET}:3000"
+info "  Alertmanager: http://${TARGET}:9093"
+audit_log "Monitoring stack deployed to ${TARGET}"
+</file>
+
+<file path="scripts/deployment-install-nvidia-toolkit-llm.sh">
+#!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
+# Описание: Устанавливает NVIDIA драйверы и Container Toolkit в LLM VM.
+#
+#   Порядок:
+#     1. Проверяем наличие GPU через lspci
+#     2. Устанавливаем драйвер ubuntu-drivers
+#     3. Перезагружаем VM если модуль ещё не загружен
+#     4. Устанавливаем nvidia-container-toolkit
+#     5. Конфигурируем docker runtime
+#     6. Верифицируем — без || true, ошибка = реальный провал
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
+
+TARGET="${1:-${LLM_IP:-}}"
+[[ -n "$TARGET" ]] || die "Target IP required. Usage: $0 <IP>"
+
+mark_step "Installing NVIDIA Container Toolkit on ${TARGET}"
+wait_for_ssh "$TARGET" 240
+ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
+ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+check_gpu_presence() {
+  local count
+  count="$(guest_ssh "$TARGET" 'lspci | grep -ci nvidia' 2>/dev/null || echo 0)"
+  if [[ "$count" -eq 0 ]]; then
+    info "No NVIDIA GPU found in guest — skipping toolkit"
+    return 1
+  fi
+  info "Detected ${count} NVIDIA device(s) in guest"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+install_nvidia_drivers() {
+  info "Installing NVIDIA drivers (latest production: 565)"
+
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+
+# Добавляем PPA для актуальных драйверов (идемпотентно)
+if ! grep -q "graphics-drivers/ppa" /etc/apt/sources.list.d/ubuntu-graphics-drivers.ppa 2>/dev/null; then
+  add-apt-repository -y ppa:graphics-drivers/ppa
+fi
+
+# Обновляем кэш пакетов
+apt-get update -qq
+
+# Устанавливаем最新的 production драйвер (565) — идемпотентно
+DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-driver-565-server
+
+echo "Driver package installed (kernel module not loaded until reboot)"
+EOF
+
+  # Проверяем загружен ли модуль
+  local loaded
+  loaded="$(guest_ssh "$TARGET" \
+    'sudo /usr/bin/nvidia-smi -L 2>/dev/null | wc -l' || echo 0)"
+
+  if [[ "$loaded" -gt 0 ]]; then
+    info "NVIDIA kernel module already loaded (${loaded} GPU(s))"
+    return 0
+  fi
+
+  # Модуль не загружен — нужна перезагрузка
+  info "NVIDIA module not loaded yet — rebooting VM to activate driver"
+  guest_ssh "$TARGET" 'sudo reboot' || true
+  sleep 20
+
+  info "Waiting for VM to come back..."
+  wait_for_ssh "$TARGET" 300
+  ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
+  ssh-keyscan -H "$TARGET" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+
+  guest_ssh "$TARGET" 'sudo /usr/bin/nvidia-smi -L' \
+    || die "nvidia-smi failed after reboot — check driver installation"
+  info "NVIDIA driver OK after reboot"
+
+  # Проверка на mismatch driver/library (если ядро не перезагрузилось с новым модулем)
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+
+# Проверяем: nvidia-smi работает, но docker run --gpus all падает с mismatch
+if /usr/bin/nvidia-smi >/dev/null 2>&1 && ! /usr/bin/nvidia-smi -L 2>&1 | grep -q "Driver Version:"; then
+  echo "NVIDIA driver mismatch detected — reloading kernel modules"
+  
+  systemctl stop docker 2>/dev/null || true
+  rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || true
+  modprobe nvidia nvidia_modeset nvidia_uvm
+  systemctl start docker
+
+  echo "GPU test after module reload:"
+  /usr/bin/nvidia-smi -L
+fi
+EOF
+}
+
+# ---------------------------------------------------------------------------
+install_nvidia_toolkit() {
+  info "Installing nvidia-container-toolkit"
+
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+
+if dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
+  echo "nvidia-container-toolkit already installed"
+  exit 0
+fi
+
+# Добавляем репозиторий NVIDIA
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit
+echo "nvidia-container-toolkit installed"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+configure_docker_runtime() {
+  info "Configuring nvidia runtime for Docker"
+
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+nvidia-ctk runtime configure --runtime=docker
+systemctl restart docker
+# Ждём пока docker поднимется
+timeout=30
+until docker info >/dev/null 2>&1; do
+  sleep 2; ((timeout--))
+  (( timeout <= 0 )) && { echo "Docker failed to restart"; exit 1; }
+done
+echo "Docker restarted with nvidia runtime"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# FIX: убран || true из GPU-теста — если GPU не работает, это реальный провал.
+# configure_nvidia_runtime() запускал docker run до того как после reboot
+# nvidia-smi успевал заработать; теперь тест вынесен сюда с явным die().
+verify_gpu_in_docker() {
+  info "Verifying GPU access inside Docker"
+
+  # Проверяем что nvidia runtime зарегистрирован
+  local has_runtime
+  has_runtime="$(guest_ssh "$TARGET" \
+    "docker info --format '{{range .Runtimes}}{{.}}{{end}}' 2>/dev/null | grep -c nvidia" \
+    || echo 0)"
+  [[ "$has_runtime" -gt 0 ]] || die "nvidia runtime not registered in Docker"
+
+  # Запускаем тест-контейнер
+  info "Running GPU container test (nvidia-smi inside Docker)"
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+
+test_gpu() {
+  docker run --rm --gpus all ubuntu:22.04 \
+    sh -c 'ls /dev/nvidia* 2>/dev/null && echo "GPU devices visible"' 2>&1
+}
+
+#first attempt
+if test_output="$(test_gpu)" && echo "$test_output" | grep -q "GPU devices visible"; then
+  echo "GPU test PASSED"
+  exit 0
+fi
+
+# Check for mismatch error
+if echo "$test_output" | grep -q "driver/library version mismatch"; then
+  echo "Driver/library mismatch detected — reloading kernel modules"
+  
+  systemctl stop docker 2>/dev/null || true
+  rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || true
+  modprobe nvidia nvidia_modeset nvidia_uvm
+  systemctl start docker
+  echo "Modules reloaded, testing again..."
+  
+  if test_output="$(test_gpu)" && echo "$test_output" | grep -q "GPU devices visible"; then
+    echo "GPU test PASSED after reload"
+    exit 0
+  fi
+fi
+
+# Fallback: полный образ (уже скачан на этапе configure)
+echo "GPU device test failed — trying nvidia-smi container"
+docker run --rm --gpus all nvidia/cuda:11.6.2-base-ubuntu20.04 nvidia-smi
+EOF
+}
+
+# ---------------------------------------------------------------------------
+if ! check_gpu_presence; then
+  audit_log "NVIDIA toolkit skipped on ${TARGET} (no GPU)"
+  exit 0
+fi
+
+install_nvidia_drivers
+install_nvidia_toolkit
+configure_docker_runtime
+verify_gpu_in_docker
+
+info "NVIDIA Container Toolkit ready on ${TARGET}"
+audit_log "NVIDIA toolkit installed on ${TARGET}"
+</file>
+
 <file path="README.md">
 # LLM Lab on Proxmox - Production‑Ready Infrastructure v3.0.0
 
@@ -5452,12 +5360,15 @@ cd /root/llm-lab
 
 ## 🌐 Доступные сервисы
 
-| Сервис | URL | Аутентификация |
-|--------|-----|----------------|
-| OpenWebUI | `http://${LLM_IP}:3000` | guest / guest (смените!) |
-| Ollama API | `http://${LLM_IP}:11434` | Без auth |
-| Prometheus | `http://${MONITORING_IP}:9090` | Без auth |
-| Grafana | `http://${MONITORING_IP}:3000` | admin / admin (смените!) |
+| Сервис | VM | Локальный порт | Внешний (через nginx) | Аутентификация |
+|--------|-----|----------------|----------------------|----------------|
+| OpenWebUI | LLM (10.10.10.50) | 3000→8080 | `http://77.50.132.85:8080` | guest / guest (смените!) |
+| Ollama API | LLM (10.10.10.50) | 11434 | `http://77.50.132.85:11434` | Без auth |
+| Prometheus | Monitoring (10.10.10.60) | 9090 | `http://77.50.132.85:9090` | Без auth |
+| Grafana | Monitoring (10.10.10.60) | 3000 | `http://77.50.132.85:3000` | admin / admin (смените!) |
+| Alertmanager | Monitoring (10.10.10.60) | 9093 | `http://77.50.132.85:9093` | Без auth |
+| Node Exporter | LLM (10.10.10.50) | 9100 | — | — |
+| DCGM Exporter | LLM (10.10.10.50) | 9400 | — | — |
 
 ## 🔒 Безопасность
 
@@ -5561,14 +5472,36 @@ FORCE_REBUILD=1 ./scripts/run-all.sh  # Пересоздает VM
 - **DNAT:** входящий трафик → nginx proxy (10.10.10.70)
 - **Whitelist:** `table inet llm_lab_filter` — строгий фильтр запрета VM→VM
 
-**Порты DNAT (77.50.132.85 → 10.10.10.70):**
-| Порт | Сервис |
-|------|--------|
-| 3000 | Grafana |
-| 8080 | Open WebUI |
-| 9090 | Prometheus |
-| 9093 | Alertmanager |
-| 11434 | Ollama API |
+**DNAT порты (77.50.132.85 → 10.10.10.70 → внутренние сервисы):**
+| Внешний порт | Целевой VM | Порт сервиса | Сервис |
+|--------------|------------|--------------|--------|
+| 8080 | LLM (10.10.10.50) | 3000 | Open WebUI |
+| 3000 | Monitoring (10.10.10.60) | 3000 | Grafana |
+| 9090 | Monitoring (10.10.10.60) | 9090 | Prometheus |
+| 9093 | Monitoring (10.10.10.60) | 9093 | Alertmanager |
+| 11434 | LLM (10.10.10.50) | 11434 | Ollama API |
+
+### GPU usage
+
+Для использования GPU:
+- Установлен драйвер NVIDIA 565.57.01
+- NVIDIA Container Toolkit настроен на Docker runtime
+- Контейнеры получают доступ к GPU через `gpus: all` в docker-compose.yml
+- Переменные окружения: `NVIDIA_VISIBLE_DEVICES=all`, `NVIDIA_DRIVER_CAPABILITIES=compute,utility`
+
+**Проверка GPU в контейнере:**
+```bash
+docker exec -it ollama nvidia-smi -L
+docker exec -it ollama ollama list
+```
+
+**Проверка GPU usage:**
+```bash
+nvidia-smi          # на хосте — видно процессы
+curl localhost:9400/metrics | grep -i gpu  # DCGM exporter
+```
+
+**Важно:** Ollama использует GPU только при вычислениях. Во время простоя GPU Util = 0% — это нормально.
 
 ### Основные параметры (YAML)
 
@@ -5633,6 +5566,15 @@ qm config 110 | grep hostpci
 # В VM
 lspci | grep -i nvidia
 nvidia-smi
+
+# Проверить GPU в контейнере
+docker exec -it ollama nvidia-smi -L
+
+# Проверить, что контейнер видит GPU (даже если не используется)
+docker exec -it ollama ollama list
+
+# GPU Util = 0% — нормально, если модель не загружается или Ollama просто запущен
+# Для нагрузки запустите генерацию текста в Open WebUI
 ```
 
 **Firewall блокирует:**
@@ -5709,11 +5651,210 @@ MIT
 **fix_locale:** убирает warning setlocale перед установкой пакетов.
 </file>
 
+<file path="scripts/infra-setup-nft-rules.sh">
+#!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
+# Описание: единственный авторитетный источник правил nftables для llm-lab.
+#
+#   Таблицы:
+#     ip   llm_lab_nat    — DNAT (WAN→nginx) + masquerade (internal→WAN)
+#     inet llm_lab_filter — forward whitelist
+#
+#   Идемпотентность:
+#     flush_lab_tables → apply_ruleset → persist_ruleset
+#     При каждом запуске: старые таблицы удаляются, применяются новые.
+#     Наслоения правил нет.
+#
+#   Персистентность после reboot:
+#     Правила пишутся в /etc/nftables.d/llm-lab.nft (drop-in директория).
+#     systemd nftables.service загружает /etc/nftables.conf, который на Proxmox
+#     содержит 'include "/etc/nftables.d/*.nft"' по умолчанию — наш файл
+#     подхватывается автоматически без правки основного конфига.
+#     Если drop-in не поддерживается — добавляем include сами, один раз.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
+require_root
+require_cmd nft
+
+# NGINX_IP экспортируется из load_config как ${NGINX_WAN_IP%/*}.
+# Страховка на случай прямого вызова без load_config.
+NGINX_IP="${NGINX_IP:-${NGINX_WAN_IP:-}}"
+NGINX_IP="${NGINX_IP%/*}"
+NGINX_IP="${NGINX_IP:-10.10.10.70}"
+
+[[ -n "$LLM_IP" ]]           || die "LLM_IP is not set"
+[[ -n "$MONITORING_IP" ]]    || die "MONITORING_IP is not set"
+[[ -n "$NGINX_IP" ]]         || die "NGINX_IP is not set"
+[[ -n "$INTERNAL_SUBNET" ]]  || die "INTERNAL_SUBNET is not set"
+[[ -n "$INTERNAL_GATEWAY" ]] || die "INTERNAL_GATEWAY is not set"
+[[ -n "$WAN_BRIDGE" ]]       || die "WAN_BRIDGE is not set"
+
+NFT_DROPIN_DIR="/etc/nftables.d"
+NFT_DROPIN_FILE="${NFT_DROPIN_DIR}/llm-lab.nft"
+NFT_MAIN_CONF="/etc/nftables.conf"
+
+mark_step "Configuring nftables for llm-lab"
+info "  LLM=${LLM_IP}  MON=${MONITORING_IP}  NGX=${NGINX_IP}"
+info "  SUBNET=${INTERNAL_SUBNET}  GW=${INTERNAL_GATEWAY}  WAN=${WAN_BRIDGE}"
+
+# ---------------------------------------------------------------------------
+backup_ruleset() {
+  local backup="/etc/nftables-backup-$(date +%Y%m%d%H%M%S).conf"
+  nft list ruleset > "$backup" 2>/dev/null || true
+  info "Ruleset backed up to ${backup}"
+}
+
+# ---------------------------------------------------------------------------
+# Флашим ВСЕ таблицы которые когда-либо создавал проект.
+# Это главная гарантия отсутствия наслоений при повторных запусках.
+flush_lab_tables() {
+  info "Flushing existing lab tables"
+  local t
+  for t in \
+    "ip   llm_lab_nat"    \
+    "inet llm_lab_filter" \
+    "inet llm_lab"        \
+    "inet pve_lab"        \
+    "ip   nat"
+  do
+    # shellcheck disable=SC2086
+    if nft delete table $t 2>/dev/null; then
+      info "  Deleted: $t"
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------
+apply_ruleset() {
+  info "Applying nftables ruleset"
+
+  # Shell раскрывает переменные до передачи в nft.
+  # Повторный вызов безопасен только после flush_lab_tables().
+  nft -f - <<EOF
+# llm-lab nftables ruleset
+# Управляется infra-setup-nft-rules.sh — не редактируй вручную.
+
+table ip llm_lab_nat {
+
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    # DNAT: WAN-трафик на сервисные порты → nginx proxy.
+    # nftables сохраняет оригинальный порт — одно правило вместо пяти.
+    iifname "${WAN_BRIDGE}" tcp dport { 3000, 8080, 9090, 9093, 11434 } \
+      dnat to ${NGINX_IP}
+  }
+
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    # Masquerade: VM → WAN (даёт VM доступ в интернет).
+    ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" masquerade
+  }
+}
+
+table inet llm_lab_filter {
+
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+
+    # 1. Established/related — не трогаем уже открытые соединения.
+    ct state established,related accept
+
+    # 2. Internal → WAN (после masquerade).
+    ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" accept
+
+    # 3. WAN → nginx (после DNAT).
+    ip daddr ${NGINX_IP} tcp dport { 3000, 8080, 9090, 9093, 11434 } accept
+
+    # 4. nginx → LLM VM.
+    ip saddr ${NGINX_IP} ip daddr ${LLM_IP} tcp dport { 3000, 11434 } accept
+
+    # 5. nginx → Monitoring VM.
+    ip saddr ${NGINX_IP} ip daddr ${MONITORING_IP} \
+      tcp dport { 3000, 9090, 9093, 9100 } accept
+
+    # 6. Prometheus → exporters на LLM VM.
+    ip saddr ${MONITORING_IP} ip daddr ${LLM_IP} tcp dport { 9100, 9400 } accept
+
+    # 7. Monitoring VM внутри себя (inter-container).
+    ip saddr ${MONITORING_IP} ip daddr ${MONITORING_IP} accept
+
+    # 8. Запрет VM↔VM, кроме явно разрешённого выше.
+    ip saddr ${INTERNAL_SUBNET} ip daddr ${INTERNAL_SUBNET} drop
+  }
+
+  chain input  { type filter hook input  priority filter; policy accept; }
+  chain output { type filter hook output priority filter; policy accept; }
+}
+EOF
+
+  info "Ruleset applied"
+}
+
+# ---------------------------------------------------------------------------
+persist_ruleset() {
+  info "Persisting ruleset to ${NFT_DROPIN_FILE}"
+
+  # Всегда ПЕРЕЗАПИСЫВАЕМ (>), не дописываем — идемпотентно.
+  mkdir -p "$NFT_DROPIN_DIR"
+  {
+    nft list table ip   llm_lab_nat
+    nft list table inet llm_lab_filter
+  } > "$NFT_DROPIN_FILE"
+  info "Written: ${NFT_DROPIN_FILE}"
+
+  # Proxmox/Debian имеют в /etc/nftables.conf строку:
+  #   include "/etc/nftables.d/*.nft"
+  # Если она есть — drop-in подхватится автоматически, ничего не трогаем.
+  # Если нет (старый Proxmox) — добавляем explicit include, один раз.
+  if grep -qE 'include.*nftables\.d/\*' "$NFT_MAIN_CONF" 2>/dev/null; then
+    info "Drop-in glob already in ${NFT_MAIN_CONF} — nothing to add"
+  elif ! grep -qF "$NFT_DROPIN_FILE" "$NFT_MAIN_CONF" 2>/dev/null; then
+    printf '\ninclude "%s"\n' "$NFT_DROPIN_FILE" >> "$NFT_MAIN_CONF"
+    info "Added include to ${NFT_MAIN_CONF}"
+  else
+    info "Explicit include already in ${NFT_MAIN_CONF}"
+  fi
+
+  systemctl enable nftables 2>/dev/null || true
+  info "Rules will persist after reboot"
+}
+
+# ---------------------------------------------------------------------------
+verify_ruleset() {
+  info "Current ruleset:"
+  nft list table ip   llm_lab_nat
+  nft list table inet llm_lab_filter
+}
+
+print_summary() {
+  local pub="${PROXMOX_HOST:-<proxmox-ip>}"
+  info "DNAT: ${pub}:{3000,8080,9090,9093,11434} → ${NGINX_IP}"
+  info "  :3000  Grafana  |  :8080  Open WebUI  |  :9090  Prometheus"
+  info "  :9093  Alertmanager  |  :11434  Ollama API"
+}
+
+# ---------------------------------------------------------------------------
+# Порядок при каждом запуске:
+#   backup → flush → apply → persist → verify
+#
+#   flush гарантирует: нет наслоений, нет дублей цепочек.
+#   persist(>) гарантирует: файл всегда актуален, нет накопления строк.
+#   include в nftables.conf добавляется только один раз (idempotent grep).
+# ---------------------------------------------------------------------------
+backup_ruleset
+flush_lab_tables
+apply_ruleset
+persist_ruleset
+verify_ruleset
+print_summary
+
+audit_log "nftables applied: LLM=${LLM_IP} MON=${MONITORING_IP} NGX=${NGINX_IP}"
+</file>
+
 <file path="scripts/run-all.sh">
 #!/usr/bin/env bash
 # Описание: Оркестратор — запускается ТОЛЬКО на Proxmox хосте.
-# Для первоначальной загрузки проекта на хост используй 00-bootstrap-remote.sh
-# с локальной машины (он сам вызовет этот скрипт после upload).
+#   Для первоначальной загрузки используй 00-bootstrap-remote.sh с локальной машины.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -5721,36 +5862,47 @@ source "${SCRIPT_DIR}/lib/common.sh"
 load_config
 require_root
 
-# FIX: убран вызов 00-bootstrap-remote.sh — он вызывается с локальной машины
-# и сам запускает run-all.sh на хосте, что создавало рекурсию.
-
-# Infrastructure
+# ---------------------------------------------------------------------------
+# 1. Инфраструктура хоста
+# ---------------------------------------------------------------------------
 "${SCRIPT_DIR}/infra-install-proxmox-tools.sh"
 "${SCRIPT_DIR}/infra-enable-iommu.sh"
-"${SCRIPT_DIR}/infra-configure-network.sh"
+"${SCRIPT_DIR}/infra-configure-network.sh"     # bridge + ip_forward (без nft)
 
-# VM creation
+# ---------------------------------------------------------------------------
+# 2. VM: образ, шаблон, LLM, Monitoring
+# ---------------------------------------------------------------------------
 "${SCRIPT_DIR}/vm-download-cloud-image.sh"
 "${SCRIPT_DIR}/vm-create-cloudinit-template.sh"
 "${SCRIPT_DIR}/vm-create-llm-vm.sh"
 "${SCRIPT_DIR}/vm-create-monitoring-vm.sh"
 
-# FIX: используем единый скрипт вместо двух дублирующих
-# Deployment LLM
-"${SCRIPT_DIR}/deployment-install-guest-runtime.sh" "${LLM_IP:-}"
-"${SCRIPT_DIR}/deployment-install-nvidia-toolkit-llm.sh" "${LLM_IP:-}"
-"${SCRIPT_DIR}/deployment-deploy-llm-stack.sh" "${LLM_IP:-}"
+# ---------------------------------------------------------------------------
+# 3. LLM VM: Docker + NVIDIA + стек
+# ---------------------------------------------------------------------------
+"${SCRIPT_DIR}/deployment-install-guest-runtime.sh"     "${LLM_IP}"
+"${SCRIPT_DIR}/deployment-install-nvidia-toolkit-llm.sh" "${LLM_IP}"
+"${SCRIPT_DIR}/deployment-deploy-llm-stack.sh"          "${LLM_IP}"
+"${SCRIPT_DIR}/ollama-setup-models.sh"                  "${LLM_IP}"
 
-# Verification
-"${SCRIPT_DIR}/deployment-check-llm-vm-quick.sh" "${LLM_IP:-}" "${MONITORING_IP:-}"
+# ---------------------------------------------------------------------------
+# 4. Monitoring VM: Docker + стек
+# ---------------------------------------------------------------------------
+"${SCRIPT_DIR}/deployment-install-guest-runtime.sh"     "${MONITORING_IP}"
+"${SCRIPT_DIR}/deployment-deploy-monitoring-stack.sh"   "${MONITORING_IP}"
 
-# Deployment Monitoring
-"${SCRIPT_DIR}/deployment-install-guest-runtime.sh" "${MONITORING_IP:-}"
-"${SCRIPT_DIR}/deployment-deploy-monitoring-stack.sh" "${MONITORING_IP:-}"
-
-# Proxy + firewall
+# ---------------------------------------------------------------------------
+# 5. Nginx proxy + nftables (порядок важен: сначала LXC, потом правила)
+# ---------------------------------------------------------------------------
 "${SCRIPT_DIR}/proxy-deploy-nginx-proxy.sh"
-"${SCRIPT_DIR}/infra-setup-nft-rules.sh"
+"${SCRIPT_DIR}/infra-setup-nft-rules.sh"               # единственный источник nft-правил
+
+# ---------------------------------------------------------------------------
+# 6. Быстрая проверка
+# ---------------------------------------------------------------------------
+"${SCRIPT_DIR}/deployment-check-llm-vm-quick.sh"
+
+audit_log "run-all.sh completed"
 </file>
 
 <file path="docker/monitoring/docker-compose.yml">
@@ -5929,8 +6081,237 @@ networks:
     driver: bridge
 </file>
 
+<file path="scripts/deployment-deploy-llm-stack.sh">
+#!/usr/bin/env bash
+# shellcheck source=./lib/common.sh
+# Описание: Разворачивает LLM стек (Ollama + OpenWebUI + node-exporter + dcgm-exporter).
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
+
+TARGET="${1:-${LLM_IP:-}}"
+[[ -n "$TARGET" ]] || die "Target IP required. Usage: $0 <IP>"
+
+REMOTE_STACK="/opt/llm-stack"
+
+mark_step "Deploying LLM stack to ${TARGET}"
+wait_for_ssh "$TARGET" 240
+
+# ---------------------------------------------------------------------------
+prepare_data_dirs() {
+  info "Preparing data directories on ${TARGET}"
+
+  # FIX: GUEST_USER передаём как позиционный аргумент — в remote bash
+  # переменные local-окружения недоступны при heredoc с 'EOF' (single quotes).
+  guest_ssh "$TARGET" bash -s -- "${GUEST_USER:-ubuntu}" <<'EOF'
+set -Eeuo pipefail
+GUSER="$1"
+sudo mkdir -p /mnt/data/ollama /mnt/data/models /mnt/data/openwebui /mnt/data/docker
+sudo chown -R "${GUSER}:${GUSER}" \
+  /mnt/data/ollama /mnt/data/models /mnt/data/openwebui
+echo "Data directories prepared"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+setup_remote_directory() {
+  # FIX: GUEST_USER передаём аргументом
+  guest_ssh "$TARGET" bash -s -- "$REMOTE_STACK" "${GUEST_USER:-ubuntu}" <<'EOF'
+set -Eeuo pipefail
+sudo mkdir -p "$1"
+sudo chown "$2:$2" "$1"
+EOF
+}
+
+# ---------------------------------------------------------------------------
+render_compose_config() {
+  info "Rendering docker-compose config"
+  cp -R "${PROJECT_ROOT}/docker/llm/." "${TMP_DIR}/"
+  sed -i "s/{{LLM_IP}}/${LLM_IP:-10.10.10.50}/g" \
+    "${TMP_DIR}/docker-compose.yml" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+transfer_stack() {
+  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
+  info "Transferring LLM stack to ${TARGET}:${REMOTE_STACK}"
+  # shellcheck disable=SC2086
+  scp -r $opts "${TMP_DIR}/." "${GUEST_USER:-ubuntu}@${TARGET}:${REMOTE_STACK}/" \
+    || die "scp failed"
+}
+
+# ---------------------------------------------------------------------------
+deploy_stack() {
+  info "Deploying LLM stack (idempotent)"
+
+  # FIX: идемпотентная проверка на локальной стороне — не exit внутри heredoc
+  local running
+  running="$(guest_ssh "$TARGET" \
+    "cd ${REMOTE_STACK} && sudo docker compose ps -q 2>/dev/null | wc -l" || echo 0)"
+
+  if [[ "$running" -gt 0 ]]; then
+    info "LLM stack already running (${running} containers) — pulling updates"
+    guest_ssh "$TARGET" \
+      "cd ${REMOTE_STACK} && sudo docker compose pull --quiet || true"
+    guest_ssh "$TARGET" \
+      "cd ${REMOTE_STACK} && sudo docker compose up -d --remove-orphans"
+  else
+    info "Starting LLM stack for the first time"
+    guest_ssh "$TARGET" \
+      "cd ${REMOTE_STACK} && sudo docker compose pull --quiet || true"
+    guest_ssh "$TARGET" \
+      "cd ${REMOTE_STACK} && sudo docker compose up -d"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+verify_deployment() {
+  info "Verifying LLM stack on ${TARGET}"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+set -Eeuo pipefail
+cd /opt/llm-stack
+echo "=== Container status ==="
+sudo docker compose ps
+
+RUNNING="$(sudo docker compose ps -q | wc -l)"
+[[ "$RUNNING" -gt 0 ]] || { echo "ERROR: no running containers"; exit 1; }
+
+echo "=== Health checks ==="
+timeout 30 curl -fsS http://localhost:11434/api/tags \
+  && echo "Ollama API OK" || echo "WARN: Ollama not ready yet (may still be loading)"
+
+# Installation logic for optimal model selection based on system resources
+# 8GB GPU + 32GB RAM → prefer GPU-capable 7B models
+# If no GPU → use CPU-optimized 3B models
+
+# ---------------------------------------------------------------------------
+install_models_if_needed() {
+  info "Checking GPU availability and installing optimal models"
+
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+
+# Check GPU availability via nvidia-smi
+if /usr/bin/nvidia-smi -L >/dev/null 2>&1; then
+  echo "GPU detected - installing mistral:7b (GPU-optimized 7B model)"
+  
+  # Pull GPU-optimized model (7B fits in 8GB VRAM with ~1GB headroom)
+  if ! ollama list 2>/dev/null | tail -n +2 | grep -q "mistral:7b"; then
+    ollama pull mistral:7b
+    echo "Model mistral:7b installed"
+  else
+    echo "Model mistral:7b already present"
+  fi
+  
+  # Optional: pull llama3.2:3b as backup for CPU fallback
+  echo "Installing llama3.2:3b as CPU fallback model..."
+  if ! ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
+    ollama pull llama3.2:3b
+    echo "Model llama3.2:3b installed"
+  else
+    echo "Model llama3.2:3b already present"
+  fi
+else
+  echo "No GPU detected - installing llama3.2:3b (CPU-optimized)"
+  
+  if ! ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
+    ollama pull llama3.2:3b
+    echo "Model llama3.2:3b installed"
+  else
+    echo "Model llama3.2:3b already present"
+  fi
+fi
+
+echo "Available models:"
+ollama list
+EOF
+}
+
+# ---------------------------------------------------------------------------
+verify_deployment() {
+  info "Verifying LLM stack on ${TARGET}"
+  guest_ssh "$TARGET" 'bash -s' <<'EOF'
+set -Eeuo pipefail
+cd /opt/llm-stack
+echo "=== Container status ==="
+sudo docker compose ps
+
+RUNNING="$(sudo docker compose ps -q | wc -l)"
+[[ "$RUNNING" -gt 0 ]] || { echo "ERROR: no running containers"; exit 1; }
+
+echo "=== Health checks ==="
+timeout 30 curl -fsS http://localhost:11434/api/tags \
+  && echo "Ollama API OK" || echo "WARN: Ollama not ready yet (may still be loading)"
+
+timeout 15 curl -fsS http://localhost:3000/login >/dev/null \
+  && echo "Open WebUI OK" || echo "WARN: WebUI not ready yet"
+EOF
+}
+
+# Install models after Ollama is healthy (called after verify_deployment)
+install_models_if_needed() {
+  info "Checking GPU availability and installing optimal models"
+
+  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+set -Eeuo pipefail
+cd /opt/llm-stack
+
+# Check GPU availability via nvidia-smi
+if /usr/bin/nvidia-smi -L >/dev/null 2>&1; then
+  echo "GPU detected - installing mistral:7b (GPU-optimized 7B model)"
+  
+  # Pull GPU-optimized model (7B fits in 8GB VRAM with ~1GB headroom)
+  if ! docker compose exec -T ollama /bin/ollama list 2>/dev/null | tail -n +2 | grep -q "mistral:7b"; then
+    docker compose exec -T ollama /bin/ollama pull mistral:7b
+    echo "Model mistral:7b installed"
+  else
+    echo "Model mistral:7b already present"
+  fi
+  
+  # Optional: pull llama3.2:3b as backup for CPU fallback
+  echo "Installing llama3.2:3b as CPU fallback model..."
+  if ! docker compose exec -T ollama /bin/ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
+    docker compose exec -T ollama /bin/ollama pull llama3.2:3b
+    echo "Model llama3.2:3b installed"
+  else
+    echo "Model llama3.2:3b already present"
+  fi
+else
+  echo "No GPU detected - installing llama3.2:3b (CPU-optimized)"
+  
+  if ! docker compose exec -T ollama /bin/ollama list 2>/dev/null | tail -n +2 | grep -q "llama3.2:3b"; then
+    docker compose exec -T ollama /bin/ollama pull llama3.2:3b
+    echo "Model llama3.2:3b installed"
+  else
+    echo "Model llama3.2:3b already present"
+  fi
+fi
+
+echo "Available models:"
+docker compose exec -T ollama /bin/ollama list
+EOF
+}
+
+# ---------------------------------------------------------------------------
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+render_compose_config
+setup_remote_directory
+transfer_stack
+prepare_data_dirs
+deploy_stack
+install_models_if_needed
+verify_deployment
+
+info "LLM stack deployed:"
+info "  Ollama API:  http://${TARGET}:11434"
+info "  Open WebUI:  http://${TARGET}:3000"
+audit_log "LLM stack deployed to ${TARGET}"
+</file>
+
 <file path="scripts/lib/common.sh">
 #!/usr/bin/env bash
+# scripts/lib/common.sh — shared library for llm-lab scripts
 set -Eeuo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -5941,109 +6322,51 @@ AUDIT_LOG_DIR="${AUDIT_LOG_DIR:-/var/log/llm-lab}"
 DRY_RUN="${DRY_RUN:-false}"
 FORCE_REBUILD="${FORCE_REBUILD:-0}"
 
-log()   { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
-info()  { log "INFO: $*"; }
-warn()  { log "WARN: $*" >&2; }
-die()   { log "ERROR: $*" >&2; exit 1; }
+log()  { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+info() { log "INFO: $*"; }
+warn() { log "WARN: $*" >&2; }
+die()  { log "ERROR: $*" >&2; exit 1; }
 
 audit_log() {
   if [[ "${ENABLE_AUDIT_LOG:-true}" == "true" ]]; then
     mkdir -p "$AUDIT_LOG_DIR"
-    local log_file
-    log_file="$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
-    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$log_file"
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" \
+      >> "$AUDIT_LOG_DIR/$(date +%Y%m%d).log"
   fi
 }
 
 on_error() {
-  local exit_code=$?
-  local line_no=${BASH_LINENO[0]:-unknown}
-  local script_name="${BASH_SOURCE[1]:-script}"
-  log "ERROR: ${script_name} failed at line ${line_no} with exit code ${exit_code}" >&2
-  audit_log "ERROR: ${script_name}:${line_no} exit ${exit_code}"
+  local exit_code=$? line_no=${BASH_LINENO[0]:-?} script="${BASH_SOURCE[1]:-script}"
+  log "ERROR: ${script} line ${line_no} exit ${exit_code}" >&2
+  audit_log "ERROR: ${script}:${line_no} exit ${exit_code}"
   exit "$exit_code"
 }
 trap on_error ERR
 
+# ---------------------------------------------------------------------------
+# Basic guards
+# ---------------------------------------------------------------------------
 require_root() { [[ "${EUID}" -eq 0 ]] || die "Run as root."; }
 require_cmd()  { command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"; }
-require_yq()   { require_cmd yq || die "yq is required. Install: https://github.com/mikefarah/yq"; }
+require_yq()   { require_cmd yq; }
 
-yaml_get() {
-  local query="$1"
-  local value
-  value="$(yq -r "$query" "$CONFIG_YAML")"
-  [[ "$value" == "null" ]] && value=""
-  printf '%s' "$value"
-}
-
-validate_network_variable() {
-  local name="$1" value="$2"
-  [[ -n "$value" ]]       || die "Network config value $name is required and must not be empty"
-  [[ "$value" != *"\""* ]] || die "Invalid quoted value loaded for $name: $value"
-}
-
-validate_network_config() {
-  validate_network_variable INTERNAL_BRIDGE  "$INTERNAL_BRIDGE"
-  validate_network_variable WAN_BRIDGE       "$WAN_BRIDGE"
-  validate_network_variable INTERNAL_CIDR    "$INTERNAL_CIDR"
-  validate_network_variable INTERNAL_SUBNET  "$INTERNAL_SUBNET"
-  validate_network_variable INTERNAL_GATEWAY "$INTERNAL_GATEWAY"
-
-  [[ "$INTERNAL_BRIDGE"  =~ ^[a-zA-Z0-9._-]+$ ]]                     || die "Invalid bridge name: $INTERNAL_BRIDGE"
-  [[ "$WAN_BRIDGE"       =~ ^[a-zA-Z0-9._-]+$ ]]                     || die "Invalid bridge name: $WAN_BRIDGE"
-  [[ "$INTERNAL_SUBNET"  =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] || die "Invalid subnet: $INTERNAL_SUBNET"
-  [[ "$INTERNAL_CIDR"    =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] || die "Invalid CIDR: $INTERNAL_CIDR"
-  [[ "$INTERNAL_GATEWAY" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]         || die "Invalid gateway: $INTERNAL_GATEWAY"
-}
-
-nftables_whitelist_config() {
-  cat <<EOF
-table inet llm_lab {
-  chain postrouting {
-    type nat hook postrouting priority srcnat; policy accept;
-    ip saddr ${LLM_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
-    ip saddr ${LLM_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
-    ip saddr ${MONITORING_IP} ip daddr 8.8.8.8/32 tcp dport { 53, 443 } masquerade
-    ip saddr ${MONITORING_IP} ip daddr 1.1.1.1/32 tcp dport { 53, 443 } masquerade
-    ip saddr ${INTERNAL_SUBNET} oifname "${WAN_BRIDGE}" drop
-  }
-  chain forward {
-    type filter hook forward priority 0; policy drop;
-    ip daddr ${LLM_IP} tcp dport { 3000, 11434 } accept
-    ip daddr ${MONITORING_IP} tcp dport { 3000, 9090 } accept
-    ct state established,related accept
-    ip saddr ${INTERNAL_SUBNET} ip daddr ${INTERNAL_SUBNET} drop
-  }
-  chain input  { type filter hook input  priority 0; policy accept; }
-  chain output { type filter hook output priority 0; policy accept; }
-}
-EOF
-}
+is_dry_run() { [[ "$DRY_RUN" == "true" ]]; }
 
 mark_step() {
   audit_log "STEP_START: $*"
   info "━━━ $* ━━━"
 }
 
-require_pve_storage() {
-  local storage="$1"
-  require_cmd pvesm
-  pvesm status | awk 'NR > 1 {print $1}' | grep -qxF "$storage" \
-    || die "Proxmox storage not found: $storage"
-}
-
-assert_var_set() { [[ -n "${!1}" ]] || die "Variable $1 is not set"; }
-is_dry_run()     { [[ "$DRY_RUN" == "true" ]]; }
-
+# ---------------------------------------------------------------------------
+# Package management
+# ---------------------------------------------------------------------------
 install_missing_packages() {
   local missing=()
-  local pkg
   for pkg in "$@"; do
     dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
   done
   if ((${#missing[@]})); then
-    info "Installing packages: ${missing[*]}"
+    info "Installing: ${missing[*]}"
     apt-get update -y
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
   fi
@@ -6055,83 +6378,112 @@ ensure_line() {
   grep -qxF "$line" "$file" || echo "$line" >> "$file"
 }
 
-vm_exists()  { qm config "$1" >/dev/null 2>&1; }
-vm_running() {
-  local status
-  status="$(qm status "$1" 2>/dev/null | awk -F': ' '/^status:/ {print $2}' | tr -d '[:space:]')"
-  info "[DEBUG] vm_running(${1}): parsed status='${status}'"
-  [[ "$status" == "running" ]]
+# ---------------------------------------------------------------------------
+# Proxmox storage
+# ---------------------------------------------------------------------------
+require_pve_storage() {
+  require_cmd pvesm
+  pvesm status | awk 'NR>1{print $1}' | grep -qxF "$1" \
+    || die "Proxmox storage not found: $1"
 }
 
-# FIX: добавлена функция fix_locale — устраняет locale warnings в LXC контейнерах
+# ---------------------------------------------------------------------------
+# VM predicates — silent, no logging (used as conditionals)
+# ---------------------------------------------------------------------------
+vm_exists()  { qm config "$1" >/dev/null 2>&1; }
+
+# FIX: убран info() — vm_running() вызывается в цикле, логи засоряли вывод
+vm_running() {
+  local st
+  st="$(qm status "$1" 2>/dev/null | awk -F': ' '/^status:/{print $2}' | tr -d '[:space:]')"
+  [[ "$st" == "running" ]]
+}
+
+# ---------------------------------------------------------------------------
+# LXC: fix locale warnings before package installs
+# ---------------------------------------------------------------------------
 fix_locale() {
-  local ctid="${1:-${NGINX_CTID:-}}"
-  [[ -n "$ctid" ]] || die "fix_locale: container ID required"
-  info "Fixing locale in container ${ctid}"
+  local ctid="${1:?fix_locale requires container ID}"
+  info "Fixing locale in LXC ${ctid}"
   pct exec "$ctid" -- bash -c "
     export DEBIAN_FRONTEND=noninteractive
     apt-get install -y -qq locales 2>/dev/null || true
     locale-gen en_US.UTF-8 2>/dev/null || true
     update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 2>/dev/null || true
-  " || warn "fix_locale: non-fatal error in container ${ctid}"
+  " || warn "fix_locale: non-fatal error in LXC ${ctid}"
 }
 
+# ---------------------------------------------------------------------------
+# VM readiness — simplified, no /tmp/vm-ips hack
+# ---------------------------------------------------------------------------
 guest_is_ready() {
   local vmid="$1" timeout="${2:-180}" waited=0
-  info "Waiting for guest agent on VM ${vmid}"
-  
-  # First try qm guest exec
-  if qm guest exec "$vmid" -- true >/dev/null 2>&1; then
-    info "Guest agent ready on VM ${vmid}"
-    return 0
-  fi
-  
-  # Fallback: try SSH
-  local ip; ip="$(grep "IP:.*${vmid}" /tmp/vm-ips 2>/dev/null | awk '{print $2}' || echo "")"
-  local guest_ip; guest_ip="$(grep "^${vmid} " /tmp/vm-ips 2>/dev/null | awk '{print $2}' || echo "")"
-  
-  [[ -z "$ip" ]] && [[ -z "$guest_ip" ]] && ip="$(grep "vmid.*${vmid}" /tmp/vm-ips 2>/dev/null | head -1 | awk '{print $NF}')"
-  
-  # Fallback: try to get IP from config
-  if [[ -z "$ip" ]] && vm_exists "$vmid"; then
-    ip="$(qm config "$vmid" | grep 'ipconfig0:' | awk '{print $2}' | sed 's/ip=\([^,]*\).*/\1/' | cut -d/ -f1)"
-  fi
-  
-  [[ -z "$ip" ]] && die "Cannot determine IP for VM ${vmid} to check guest agent"
-  
-  info "Trying SSH on ${ip} as fallback"
-  if wait_for_ssh "$ip" "$timeout"; then
-    info "Guest agent ready on VM ${vmid} (via SSH)"
-    return 0
-  fi
-  
-  # Original behavior with qm guest exec and timeout
+  info "Waiting for QEMU guest agent on VM ${vmid} (timeout ${timeout}s)"
   until qm guest exec "$vmid" -- true >/dev/null 2>&1; do
-    sleep 3; ((waited += 3))
+    sleep 5
+    ((waited += 5))
     ((waited >= timeout)) && die "Guest agent not ready on VM ${vmid} after ${timeout}s"
   done
   info "Guest agent ready on VM ${vmid}"
 }
 
+# FIX: используем SSH через guest_ssh, а не qm guest exec с жёстким таймаутом Proxmox
 wait_for_cloud_init() {
   local vmid="$1" timeout="${2:-300}" waited=0
-  info "Waiting for cloud-init on VM ${vmid}"
-  
-  local ip; ip="$(qm config "$vmid" 2>/dev/null | grep 'ipconfig0:' | awk '{print $2}' | sed 's/ip=\([^,]*\).*/\1/' | cut -d/ -f1)"
-  [[ -z "$ip" ]] && die "Cannot determine IP for VM ${vmid}"
-  
-  info "Waiting for cloud-init on VM ${vmid} (IP: ${ip})"
+  # IP получаем из cloud-init ipconfig0 в конфиге VM
+  local ip
+  ip="$(qm config "$vmid" 2>/dev/null \
+    | awk -F'[= ,/]' '/^ipconfig0:/{for(i=1;i<=NF;i++) if($i=="ip") print $(i+1)}')"
+  [[ -n "$ip" ]] || die "Cannot determine IP for VM ${vmid} from ipconfig0"
+
+  info "Waiting for cloud-init on VM ${vmid} (${ip}, timeout ${timeout}s)"
   while ! guest_ssh "$ip" 'test -f /var/lib/cloud/boot-finished' 2>/dev/null; do
     sleep 5; ((waited += 5))
-    if ((waited % 30 == 0)); then
-      local status; status="$(guest_ssh "$ip" 'cloud-init status' 2>/dev/null || echo 'unknown')"
-      info "cloud-init status on VM ${vmid}: ${status}"
+    if ((waited % 60 == 0)); then
+      local st; st="$(guest_ssh "$ip" 'cloud-init status 2>/dev/null' || echo '?')"
+      info "cloud-init on VM ${vmid}: ${st}"
     fi
-    ((waited >= timeout)) && die "cloud-init did not finish on VM ${vmid} after ${timeout}s"
+    ((waited >= timeout)) && die "cloud-init timed out on VM ${vmid} after ${timeout}s"
   done
   info "cloud-init completed on VM ${vmid}"
 }
 
+check_guest_network() {
+  local vmid="$1" expected_ip="$2" timeout="${3:-120}" waited=0
+  info "Waiting for IP ${expected_ip} on VM ${vmid}"
+  while :; do
+    local raw out
+    raw="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || true
+    out="$(parse_qm_guest_exec_output "$raw")"
+    if printf '%s' "$out" | grep -qF "$expected_ip"; then
+      info "VM ${vmid} has IP ${expected_ip}"; return 0
+    fi
+    sleep 5; ((waited += 5))
+    if ((waited >= timeout)); then
+      warn "VM ${vmid}: IP ${expected_ip} not found after ${timeout}s"
+      warn "Current addrs: $(printf '%s' "$out" | grep 'inet ' || echo 'none')"
+      return 1
+    fi
+  done
+}
+
+check_system_running() {
+  local vmid="$1" raw state
+  raw="$(qm guest exec "$vmid" -- systemctl is-system-running 2>/dev/null)" || {
+    warn "System state check failed on VM ${vmid}"; return 1
+  }
+  state="$(parse_qm_guest_exec_output "$raw")"
+  state="${state//[$'\r\n']/}"
+  case "$state" in
+    running)          info "VM ${vmid} system: running"; return 0 ;;
+    degraded|starting) warn "VM ${vmid} system: ${state} (proceeding)"; return 0 ;;
+    *)                warn "VM ${vmid} system: ${state}"; return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# qm guest exec output parsing
+# ---------------------------------------------------------------------------
 parse_qm_guest_exec_output() {
   local raw="$1"
   if [[ "$raw" == *'"out-data"'* ]]; then
@@ -6139,206 +6491,206 @@ parse_qm_guest_exec_output() {
     parsed="$(printf '%s\n' "$raw" \
       | grep '"out-data"' \
       | sed -e 's/^.*"out-data"[[:space:]]*:[[:space:]]*"//' \
-            -e 's/"[[:space:]]*,[[:space:]]*"[^"]*"[[:space:]]*:.*$//' \
+            -e 's/"[[:space:]]*,.*$//' \
             -e 's/"[[:space:]]*}[[:space:]]*$//' \
-            -e 's/"[,]$//' \
             -e 's/"$//')"
-    if [[ -n "$parsed" ]]; then
-      parsed="${parsed%\\n}"; parsed="${parsed//\\n/ }"
-      printf '%s' "$parsed"; return
-    fi
+    parsed="${parsed%\\n}"; parsed="${parsed//\\n/ }"
+    [[ -n "$parsed" ]] && { printf '%s' "$parsed"; return; }
   fi
   printf '%s' "$raw"
 }
 
-parse_qm_guest_exec_error() {
-  local raw="$1" parsed
-  parsed="$(printf '%s\n' "$raw" \
-    | grep '"err-data"' \
-    | sed -e 's/^.*"err-data"[[:space:]]*:[[:space:]]*"//' \
-          -e 's/"[[:space:]]*,[[:space:]]*"[^"]*"[[:space:]]*:.*$//' \
-          -e 's/"[[:space:]]*}[[:space:]]*$//' \
-          -e 's/"[,]$//' \
-          -e 's/"$//')" || true
-  if [[ -n "$parsed" ]]; then
-    parsed="${parsed%\\n}"; parsed="${parsed//\\n/ }"
-    printf '%s' "$parsed"
-  fi
-}
-
 parse_qm_guest_exec_exitcode() {
-  local raw="$1" exitcode
-  exitcode="$(printf '%s\n' "$raw" \
-    | sed -nE 's/.*"exitcode"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' \
-    | head -n1)" || true
-  printf '%s' "${exitcode:-0}"
+  printf '%s' "$(printf '%s\n' "$1" \
+    | sed -nE 's/.*"exitcode"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' | head -1)"
 }
 
-assert_qm_guest_exec_success() {
-  local raw="$1" context="${2:-qm guest exec}" exitcode
-  exitcode="$(parse_qm_guest_exec_exitcode "$raw")"
-  if [[ "$exitcode" != "0" ]]; then
-    warn "$context failed inside guest with exitcode ${exitcode}"
-    warn "Guest output: $(parse_qm_guest_exec_output "$raw")"
-    local err; err="$(parse_qm_guest_exec_error "$raw")"
-    [[ -n "$err" ]] && warn "Guest error: $err"
-    return 1
-  fi
-}
-
-check_system_running() {
-  local vmid="$1" result state
-  result="$(qm guest exec "$vmid" -- systemctl is-system-running 2>/dev/null)" || {
-    warn "System running check failed on VM ${vmid}"; return 1
-  }
-  state="$(parse_qm_guest_exec_output "$result")"
-  state="${state//$'\r'/}"; state="${state//$'\n'/}"
-  case "$state" in
-    running*)          info "System is running on VM ${vmid}: ${state}"; return 0 ;;
-    degraded|starting*) warn "System state on VM ${vmid}: ${state} (continuing)"; return 0 ;;
-    *)                 warn "System state on VM ${vmid}: ${state}"; return 1 ;;
-  esac
-}
-
-check_guest_network() {
-  local vmid="$1" expected_ip="$2" timeout="${3:-120}" waited=0
-  info "Verifying guest network IP ${expected_ip} on VM ${vmid}"
-  while :; do
-    local result out iface_list cloud_init_status link_status route_status
-    result="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || { sleep 3; ((waited+=3)); ((waited>=timeout)) && { warn "check_guest_network: ip failed"; return 1; }; continue; }
-    out="$(parse_qm_guest_exec_output "$result")"
-    iface_list="$(qm guest exec "$vmid" -- ip -4 addr show 2>/dev/null)" || true
-    link_status="$(qm guest exec "$vmid" -- ip link show 2>/dev/null)" || true
-    route_status="$(qm guest exec "$vmid" -- ip route 2>/dev/null)" || true
-    cloud_init_status="$(qm guest exec "$vmid" -- cloud-init status 2>/dev/null || true)"
-    info "check_guest_network: VM ${vmid} iface: ${iface_list}, cloud-init: ${cloud_init_status}"
-    info "check_guest_network: VM ${vmid} link: ${link_status}, route: ${route_status}"
-    if printf '%s' "$out" | grep -q -- "$expected_ip"; then
-      info "Guest ${vmid} has IP ${expected_ip}"
-      return 0
-    fi
-    sleep 3; ((waited+=3))
-    if ((waited >= timeout)); then
-      warn "Guest ${vmid} missing IP ${expected_ip} after ${timeout}s"
-      warn "Current interface list: ${iface_list}"
-      warn "Link status: ${link_status}"
-      warn "Route status: ${route_status}"
-      return 1
-    fi
-  done
-}
-
+# ---------------------------------------------------------------------------
+# PCI validation
+# ---------------------------------------------------------------------------
 validate_pci_device() {
   local pci_addr="$1"
   require_cmd lspci
-  if [[ -n "$pci_addr" ]]; then
-    lspci -s "$pci_addr" >/dev/null 2>&1 || die "PCI device not found: $pci_addr"
-    local kernel_driver
-    kernel_driver="$(lspci -s "$pci_addr" -k 2>/dev/null \
-      | awk -F': ' '/Kernel driver in use:/ {print $2; exit}')"
-    if [[ -n "$kernel_driver" && "$kernel_driver" != "vfio-pci" ]]; then
-      warn "PCI device $pci_addr bound to host driver '$kernel_driver'; passthrough may need vfio-pci"
-    fi
-    info "Validated PCI device: $pci_addr"
-  else
-    warn "No PCI device address provided"
+  [[ -n "$pci_addr" ]] || { warn "No PCI device address provided"; return 0; }
+  lspci -s "$pci_addr" >/dev/null 2>&1 || die "PCI device not found: $pci_addr"
+  local drv
+  drv="$(lspci -s "$pci_addr" -k 2>/dev/null \
+         | awk -F': ' '/Kernel driver in use:/{print $2; exit}')"
+  if [[ -n "$drv" && "$drv" != "vfio-pci" ]]; then
+    warn "PCI ${pci_addr} bound to '${drv}'; passthrough needs vfio-pci binding"
   fi
+  info "PCI device validated: $pci_addr"
 }
 
+# ---------------------------------------------------------------------------
+# Misc helpers
+# ---------------------------------------------------------------------------
 normalize_gb() {
-  local value="$1"
-  value="${value%G}"; value="${value%GB}"
-  [[ "$value" =~ ^[0-9]+$ ]] || die "Invalid disk size: $1"
-  echo "$value"
+  local v="${1%G}"; v="${v%GB}"
+  [[ "$v" =~ ^[0-9]+$ ]] || die "Invalid disk size: $1"
+  printf '%s' "$v"
+}
+
+# ---------------------------------------------------------------------------
+# SSH helpers
+# ---------------------------------------------------------------------------
+guest_ssh() {
+  local host="$1"; shift
+  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30}"
+  if is_dry_run; then
+    info "[DRY RUN] ssh ${GUEST_USER:-ubuntu}@${host} $*"; return 0
+  fi
+  audit_log "SSH ${host}: $*"
+  # shellcheck disable=SC2086
+  ssh $opts "${GUEST_USER:-ubuntu}@${host}" "$@"
+}
+
+wait_for_ssh() {
+  local host="$1" timeout="${2:-180}" waited=0
+  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30}"
+  info "Waiting for SSH on ${GUEST_USER:-ubuntu}@${host} (timeout ${timeout}s)"
+  ssh-keygen -R "$host" >/dev/null 2>&1 || true
+  while :; do
+    # shellcheck disable=SC2086
+    if ssh $opts -o ConnectTimeout=5 -o BatchMode=yes \
+        "${GUEST_USER:-ubuntu}@${host}" true >/dev/null 2>&1; then
+      info "SSH ready on ${host}"; return 0
+    fi
+    sleep 5; ((waited += 5))
+    ((waited >= timeout)) && die "SSH not ready on ${host} after ${timeout}s"
+  done
+}
+
+# ---------------------------------------------------------------------------
+# qm wrapper
+# ---------------------------------------------------------------------------
+qm_command() {
+  if is_dry_run; then
+    info "[DRY RUN] qm $*"; return 0
+  fi
+  audit_log "qm $*"
+  qm "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
+yaml_get() {
+  local v
+  v="$(yq -r "$1" "$CONFIG_YAML")"
+  [[ "$v" == "null" ]] && v=""
+  printf '%s' "$v"
+}
+
+validate_network_config() {
+  local vars=(INTERNAL_BRIDGE WAN_BRIDGE INTERNAL_CIDR INTERNAL_SUBNET INTERNAL_GATEWAY)
+  for var in "${vars[@]}"; do
+    local val="${!var:-}"
+    [[ -n "$val" ]]        || die "Network variable $var is empty"
+    [[ "$val" != *'"'* ]]  || die "Network variable $var contains quotes: $val"
+  done
+  [[ "$INTERNAL_BRIDGE"  =~ ^[a-zA-Z0-9._-]+$ ]] || die "Invalid INTERNAL_BRIDGE: $INTERNAL_BRIDGE"
+  [[ "$WAN_BRIDGE"       =~ ^[a-zA-Z0-9._-]+$ ]] || die "Invalid WAN_BRIDGE: $WAN_BRIDGE"
+  [[ "$INTERNAL_SUBNET"  =~ ^[0-9./]+$ ]]         || die "Invalid INTERNAL_SUBNET: $INTERNAL_SUBNET"
+  [[ "$INTERNAL_CIDR"    =~ ^[0-9./]+$ ]]         || die "Invalid INTERNAL_CIDR: $INTERNAL_CIDR"
+  [[ "$INTERNAL_GATEWAY" =~ ^[0-9.]+$ ]]           || die "Invalid INTERNAL_GATEWAY: $INTERNAL_GATEWAY"
 }
 
 load_yaml_config() {
   require_yq
-  if [[ -f "$CONFIG_YAML" ]]; then
-    info "Loading YAML config from $CONFIG_YAML"
+  [[ -f "$CONFIG_YAML" ]] || { warn "YAML config not found: $CONFIG_YAML"; return 1; }
+  info "Loading YAML config from $CONFIG_YAML"
 
-    export LLM_VMID LLM_NAME LLM_IP LLM_PREFIX LLM_MEMORY_MB LLM_CORES LLM_SYSTEM_DISK_GB LLM_DATA_DISK_GB
-    export MONITORING_VMID MONITORING_NAME MONITORING_IP MONITORING_PREFIX
-    export MONITORING_MEMORY_MB MONITORING_CORES MONITORING_SYSTEM_DISK_GB MONITORING_DATA_DISK_GB
-    export INTERNAL_BRIDGE INTERNAL_GATEWAY DNS_SERVER INTERNAL_CIDR INTERNAL_SUBNET WAN_BRIDGE
-    export TEMPLATE_VMID TEMPLATE_STORAGE LLM_STORAGE MONITORING_STORAGE GUEST_USER SSH_OPTS
-    export GPU_PCI_ADDR GPU_PASSTHROUGH FIREWALL_ENABLED LOGGING_ENABLED AUDIT_ENABLED
-    export PROXMOX_HOST PROXMOX_USER REMOTE_DIR
-    export NGINX_CTID NGINX_HOSTNAME NGINX_STORAGE NGINX_DISK_GB NGINX_MEMORY_MB NGINX_CORES
-    export NGINX_WAN_IP NGINX_WAN_GW LXC_TEMPLATE
+  # --- LLM VM ---
+  export LLM_VMID LLM_NAME LLM_IP LLM_PREFIX LLM_MEMORY_MB LLM_CORES \
+         LLM_SYSTEM_DISK_GB LLM_DATA_DISK_GB GPU_PCI_ADDR GPU_PASSTHROUGH
+  LLM_VMID="$(yaml_get '.llm_vm.vmid')"
+  LLM_NAME="$(yaml_get '.llm_vm.name')"
+  LLM_IP="$(yaml_get '.llm_vm.ip')"
+  LLM_PREFIX="$(yaml_get '.llm_vm.prefix')"
+  LLM_MEMORY_MB="$(yaml_get '.llm_vm.memory_mb')"
+  LLM_CORES="$(yaml_get '.llm_vm.cores')"
+  LLM_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.system_disk_gb')")"
+  LLM_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.data_disk_gb')")"
+  GPU_PCI_ADDR="$(yaml_get '.llm_vm.gpu_pci_addr')"
+  GPU_PASSTHROUGH="$(yaml_get '.features.gpu_passthrough')"
 
-    # FIX: LLM_VMID был пропущен — добавлен
-    LLM_VMID="$(yaml_get '.llm_vm.vmid')"
-    LLM_NAME="$(yaml_get '.llm_vm.name')"
-    LLM_IP="$(yaml_get '.llm_vm.ip')"
-    LLM_PREFIX="$(yaml_get '.llm_vm.prefix')"
-    LLM_MEMORY_MB="$(yaml_get '.llm_vm.memory_mb')"
-    LLM_CORES="$(yaml_get '.llm_vm.cores')"
-    LLM_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.system_disk_gb')")"
-    LLM_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.llm_vm.data_disk_gb')")"
+  # --- Monitoring VM ---
+  export MONITORING_VMID MONITORING_NAME MONITORING_IP MONITORING_PREFIX \
+         MONITORING_MEMORY_MB MONITORING_CORES MONITORING_SYSTEM_DISK_GB MONITORING_DATA_DISK_GB
+  MONITORING_VMID="$(yaml_get '.monitoring_vm.vmid')"
+  MONITORING_NAME="$(yaml_get '.monitoring_vm.name')"
+  MONITORING_IP="$(yaml_get '.monitoring_vm.ip')"
+  MONITORING_PREFIX="$(yaml_get '.monitoring_vm.prefix')"
+  MONITORING_MEMORY_MB="$(yaml_get '.monitoring_vm.memory_mb')"
+  MONITORING_CORES="$(yaml_get '.monitoring_vm.cores')"
+  MONITORING_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.system_disk_gb')")"
+  MONITORING_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.data_disk_gb')")"
 
-    MONITORING_VMID="$(yaml_get '.monitoring_vm.vmid')"
-    MONITORING_NAME="$(yaml_get '.monitoring_vm.name')"
-    MONITORING_IP="$(yaml_get '.monitoring_vm.ip')"
-    MONITORING_PREFIX="$(yaml_get '.monitoring_vm.prefix')"
-    MONITORING_MEMORY_MB="$(yaml_get '.monitoring_vm.memory_mb')"
-    MONITORING_CORES="$(yaml_get '.monitoring_vm.cores')"
-    MONITORING_SYSTEM_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.system_disk_gb')")"
-    MONITORING_DATA_DISK_GB="$(normalize_gb "$(yaml_get '.monitoring_vm.data_disk_gb')")"
+  # --- Network ---
+  export INTERNAL_BRIDGE INTERNAL_GATEWAY INTERNAL_CIDR INTERNAL_SUBNET WAN_BRIDGE DNS_SERVER
+  INTERNAL_BRIDGE="$(yaml_get '.network.internal_bridge')"
+  INTERNAL_GATEWAY="$(yaml_get '.network.internal_gateway')"
+  INTERNAL_CIDR="$(yaml_get '.network.internal_cidr')"
+  INTERNAL_SUBNET="$(yaml_get '.network.internal_subnet')"
+  WAN_BRIDGE="$(yaml_get '.network.wan_bridge')"
+  DNS_SERVER="$(yaml_get '.network.dns_server')"
 
-    INTERNAL_BRIDGE="$(yaml_get '.network.internal_bridge')"
-    INTERNAL_GATEWAY="$(yaml_get '.network.internal_gateway')"
-    DNS_SERVER="$(yaml_get '.network.dns_server')"
-    INTERNAL_CIDR="$(yaml_get '.network.internal_cidr')"
-    INTERNAL_SUBNET="$(yaml_get '.network.internal_subnet')"
-    WAN_BRIDGE="$(yaml_get '.network.wan_bridge')"
+  # --- Storage / Template ---
+  export TEMPLATE_VMID TEMPLATE_STORAGE LLM_STORAGE MONITORING_STORAGE \
+         UBUNTU_IMAGE_PATH PREPARED_IMAGE_PATH SSH_PUBLIC_KEY
+  TEMPLATE_VMID="$(yaml_get '.template.vmid')"
+  TEMPLATE_STORAGE="$(yaml_get '.template.storage')"
+  LLM_STORAGE="$(yaml_get '.storage.llm')"
+  MONITORING_STORAGE="$(yaml_get '.storage.monitoring')"
+  UBUNTU_IMAGE_PATH="$(yaml_get '.template.ubuntu_image_path')"
+  PREPARED_IMAGE_PATH="$(yaml_get '.template.prepared_image_path')"
+  SSH_PUBLIC_KEY="$(yaml_get '.template.ssh_public_key')"
 
-    TEMPLATE_VMID="$(yaml_get '.template.vmid')"
-    TEMPLATE_STORAGE="$(yaml_get '.template.storage')"
-    LLM_STORAGE="$(yaml_get '.storage.llm')"
-    MONITORING_STORAGE="$(yaml_get '.storage.monitoring')"
+  # --- Guest ---
+  export GUEST_USER SSH_OPTS
+  GUEST_USER="$(yaml_get '.guest.user')"
+  SSH_OPTS="$(yaml_get '.guest.ssh_opts')"
 
-    GUEST_USER="$(yaml_get '.guest.user')"
-    SSH_OPTS="$(yaml_get '.guest.ssh_opts')"
+  # --- Proxmox ---
+  export PROXMOX_HOST PROXMOX_USER REMOTE_DIR
+  PROXMOX_HOST="$(yaml_get '.proxmox.host')"
+  PROXMOX_USER="$(yaml_get '.proxmox.user')"
+  REMOTE_DIR="$(yaml_get '.proxmox.remote_dir')"
 
-    GPU_PCI_ADDR="$(yaml_get '.llm_vm.gpu_pci_addr')"
-    GPU_PASSTHROUGH="$(yaml_get '.features.gpu_passthrough')"
-    FIREWALL_ENABLED="$(yaml_get '.features.firewall_enabled')"
-    LOGGING_ENABLED="$(yaml_get '.features.logging_enabled')"
-    AUDIT_ENABLED="$(yaml_get '.features.audit_enabled')"
+  # --- Nginx proxy ---
+  # FIX: NGINX_IP экспортируется явно (раньше только NGINX_WAN_IP, что ломало infra-setup-nft-rules.sh)
+  export NGINX_CTID NGINX_HOSTNAME NGINX_STORAGE NGINX_DISK_GB NGINX_MEMORY_MB NGINX_CORES \
+         NGINX_WAN_IP NGINX_IP NGINX_WAN_GW LXC_TEMPLATE
+  NGINX_CTID="$(yaml_get '.nginx_proxy.ctid')"
+  NGINX_HOSTNAME="$(yaml_get '.nginx_proxy.hostname')"
+  NGINX_STORAGE="$(yaml_get '.nginx_proxy.storage')"
+  NGINX_DISK_GB="$(yaml_get '.nginx_proxy.disk_gb')"
+  NGINX_MEMORY_MB="$(yaml_get '.nginx_proxy.memory_mb')"
+  NGINX_CORES="$(yaml_get '.nginx_proxy.cores')"
+  NGINX_WAN_IP="$(yaml_get '.nginx_proxy.wan_ip')"
+  NGINX_IP="${NGINX_WAN_IP%/*}"   # strip prefix length (10.10.10.70/24 → 10.10.10.70)
+  NGINX_WAN_GW="$(yaml_get '.nginx_proxy.wan_gw')"
+  LXC_TEMPLATE="$(yaml_get '.nginx_proxy.lxc_template')"
 
-    PROXMOX_HOST="$(yaml_get '.proxmox.host')"
-    PROXMOX_USER="$(yaml_get '.proxmox.user')"
-    REMOTE_DIR="$(yaml_get '.proxmox.remote_dir')"
+  # --- Features ---
+  export FIREWALL_ENABLED LOGGING_ENABLED AUDIT_ENABLED
+  FIREWALL_ENABLED="$(yaml_get '.features.firewall_enabled')"
+  LOGGING_ENABLED="$(yaml_get '.features.logging_enabled')"
+  AUDIT_ENABLED="$(yaml_get '.features.audit_enabled')"
 
-    # FIX: nginx_proxy теперь читает flat-структуру (после исправления infra.yaml)
-    NGINX_CTID="$(yaml_get '.nginx_proxy.ctid')"
-    NGINX_HOSTNAME="$(yaml_get '.nginx_proxy.hostname')"
-    NGINX_STORAGE="$(yaml_get '.nginx_proxy.storage')"
-    NGINX_DISK_GB="$(yaml_get '.nginx_proxy.disk_gb')"
-    NGINX_MEMORY_MB="$(yaml_get '.nginx_proxy.memory_mb')"
-    NGINX_CORES="$(yaml_get '.nginx_proxy.cores')"
-    NGINX_WAN_IP="$(yaml_get '.nginx_proxy.wan_ip')"
-    NGINX_IP="${NGINX_WAN_IP%/*}"
-    NGINX_WAN_GW="$(yaml_get '.nginx_proxy.wan_gw')"
-    LXC_TEMPLATE="$(yaml_get '.nginx_proxy.lxc_template')"
-
-    validate_network_config
-    audit_log "Loaded YAML config"
-  else
-    warn "YAML config not found: $CONFIG_YAML. Falling back to environment variables."
-  fi
+  validate_network_config
+  audit_log "Loaded YAML config from $CONFIG_YAML"
 }
 
 load_legacy_config() {
-  if [[ -f "$CONFIG_FILE" ]]; then
-    set -a
-    warn "Loading legacy config from $CONFIG_FILE (deprecated, use YAML)"
-    # shellcheck disable=SC1090
-    source "$CONFIG_FILE"
-    set +a
-    audit_log "Loaded legacy config"
-  fi
+  [[ -f "$CONFIG_FILE" ]] || return 1
+  warn "Loading legacy .env config (deprecated — migrate to infra.yaml)"
+  set -a
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+  set +a
+  audit_log "Loaded legacy config from $CONFIG_FILE"
 }
 
 load_config() {
@@ -6347,47 +6699,8 @@ load_config() {
   elif [[ -f "$CONFIG_FILE" ]]; then
     load_legacy_config
   else
-    die "No config file found. Create $CONFIG_YAML or $CONFIG_FILE"
+    die "No config found. Create $CONFIG_YAML (see config/lab.env.example)"
   fi
-}
-
-qm_command() {
-  local cmd=("qm" "$@")
-  if is_dry_run; then
-    info "[DRY RUN] Would run: ${cmd[*]}"; return 0
-  else
-    audit_log "Executing: ${cmd[*]}"
-    "${cmd[@]}"
-  fi
-}
-
-guest_ssh() {
-  local host="$1"; shift
-  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
-  if is_dry_run; then
-    info "[DRY RUN] Would ssh to ${host}: $*"; return 0
-  else
-    audit_log "SSH to ${host}: $*"
-    ssh $opts "${GUEST_USER:-ubuntu}@${host}" "$@"
-  fi
-}
-
-wait_for_ssh() {
-  local host="$1" timeout="${2:-180}" waited=0
-  local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
-  info "Waiting for SSH on ${GUEST_USER:-ubuntu}@${host}"
-  
-  # Remove old host key to avoid fingerprint mismatch
-  ssh-keygen -R "$host" >/dev/null 2>&1 || true
-  mkdir -p "$HOME/.ssh"
-  
-  while :; do
-    if ssh $opts -o ConnectTimeout=10 -o BatchMode=yes "${GUEST_USER:-ubuntu}@${host}" true >/dev/null 2>&1; then
-      info "SSH is ready on ${host}"; return 0
-    fi
-    sleep 3; ((waited += 3))
-    ((waited >= timeout)) && die "SSH not ready on ${host} after ${timeout}s"
-  done
 }
 </file>
 
