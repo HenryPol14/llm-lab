@@ -281,8 +281,7 @@ verify_nginx() {
 
 print_access_info() {
   info "Nginx proxy deployed — LXC ${NGINX_CTID}, internal IP: ${NGINX_IP_ONLY}"
-  info "Run infra-setup-nft-rules.sh to configure DNAT and firewall"
-  info "After that access via HTTPS://77.50.132.85:"
+  info "Access via HTTPS://77.50.132.85 (DNAT rule was applied earlier by infra-setup-nft-rules.sh):"
   info "  Open WebUI:    https://77.50.132.85/"
   info "  Ollama API:    https://77.50.132.85/ollama/"
   info "  Prometheus:    https://77.50.132.85/prometheus/"

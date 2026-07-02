@@ -241,7 +241,12 @@ phase1_deploy() {
   # только теперь появляется, поэтому live HTTPS-проверка идёт здесь.
   deploy_step "proxy-deploy-nginx-proxy.sh" "${SCRIPT_DIR}/proxy-deploy-nginx-proxy.sh"
   check "nginx active in LXC ${NGINX_CTID}" bash -c "pct exec ${NGINX_CTID} -- systemctl is-active --quiet nginx"
-  check "public HTTPS entrypoint responding" curl_ok "https://${PROXMOX_HOST}/" 10
+  # Проверяем внутренний IP контейнера напрямую, а не публичный PROXMOX_HOST:
+  # DNAT работает в хуке prerouting, который не применяется к трафику,
+  # локально сгенерированному самим хостом (hairpin NAT здесь не настроен) —
+  # curl с хоста на собственный публичный IP получил бы ложный "connection
+  # refused" даже при полностью рабочем DNAT для настоящих внешних клиентов.
+  check "nginx HTTPS responding on ${NGINX_IP}" curl_ok "https://${NGINX_IP}/" 10
 
   "${SCRIPT_DIR}/deployment-check-llm-vm-quick.sh"
 
