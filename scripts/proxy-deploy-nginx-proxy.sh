@@ -233,10 +233,12 @@ server {
         proxy_set_header   X-Forwarded-Proto \$scheme;
     }
 
-    # Grafana
+    # Grafana — GF_SERVER_SERVE_FROM_SUB_PATH=true (см. docker/monitoring/docker-compose.yml),
+    # поэтому, в отличие от Prometheus/Alertmanager, префикс /grafana/ нужно
+    # передавать внутрь как есть, а не срезать — иначе Grafana не узнаёт себя
+    # на голом "/" (её root_url настроен на .../grafana/) и уходит в редирект-цикл.
     location /grafana/ {
-        proxy_pass         http://${MONITORING_IP}:3000/;
-        proxy_redirect   / /grafana/;
+        proxy_pass         http://${MONITORING_IP}:3000/grafana/;
         proxy_set_header   Host \$host;
         proxy_set_header   X-Real-IP \$remote_addr;
         proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
