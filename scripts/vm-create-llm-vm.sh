@@ -242,6 +242,11 @@ start_and_wait_vm() {
 
   check_system_running "$LLM_VMID" || die "System check failed for VM ${LLM_VMID}"
 
+  # На первой загрузке cloud-init может ещё выполнять свой собственный
+  # apt update/upgrade — ждём его завершения, иначе следующие шаги пайплайна
+  # (установка Docker и т.д.) будут гоняться с ним за apt/dpkg lock.
+  wait_for_cloud_init "$LLM_VMID" 600
+
   verify_gpu_passthrough
 }
 

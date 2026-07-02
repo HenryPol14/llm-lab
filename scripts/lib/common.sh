@@ -117,15 +117,19 @@ guest_is_ready() {
 
 # FIX: используем SSH через guest_ssh, а не qm guest exec с жёстким таймаутом Proxmox
 wait_for_cloud_init() {
-  local vmid="$1" timeout="${2:-300}" waited=0
+  local vmid="$1" timeout="${2:-600}" waited=0
   # IP получаем из cloud-init ipconfig0 в конфиге VM
   local ip
   ip="$(qm config "$vmid" 2>/dev/null \
     | awk -F'[= ,/]' '/^ipconfig0:/{for(i=1;i<=NF;i++) if($i=="ip") print $(i+1)}')"
   [[ -n "$ip" ]] || die "Cannot determine IP for VM ${vmid} from ipconfig0"
 
+  # Ждём, пока cloud-init полностью завершится (включая его собственный
+  # apt update/upgrade на первой загрузке) — иначе следующие шаги пайплайна
+  # гоняются с cloud-init за apt/dpkg lock. Маркер — /var/lib/cloud/instance/
+  # boot-finished (не /var/lib/cloud/boot-finished — той дорожки не существует).
   info "Waiting for cloud-init on VM ${vmid} (${ip}, timeout ${timeout}s)"
-  while ! guest_ssh "$ip" 'test -f /var/lib/cloud/boot-finished' 2>/dev/null; do
+  while ! guest_ssh "$ip" 'test -f /var/lib/cloud/instance/boot-finished' 2>/dev/null; do
     sleep 5; ((waited += 5))
     if ((waited % 60 == 0)); then
       local st; st="$(guest_ssh "$ip" 'cloud-init status 2>/dev/null' || echo '?')"

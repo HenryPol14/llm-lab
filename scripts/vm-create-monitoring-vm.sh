@@ -86,6 +86,11 @@ start_and_wait_vm() {
     die "Guest network not configured on VM ${MONITORING_VMID} (expected IP: ${MONITORING_IP})"
   fi
   check_system_running "$MONITORING_VMID" || die "System check failed for VM ${MONITORING_VMID}"
+
+  # На первой загрузке cloud-init может ещё выполнять свой собственный
+  # apt update/upgrade — ждём его завершения, иначе следующие шаги пайплайна
+  # (установка Docker и т.д.) будут гоняться с ним за apt/dpkg lock.
+  wait_for_cloud_init "$MONITORING_VMID" 600
 }
 
 grow_system_disk() {

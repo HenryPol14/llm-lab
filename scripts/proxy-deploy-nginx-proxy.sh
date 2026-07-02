@@ -48,7 +48,7 @@ apt_lock_retry() {
     fi
     rc=$?
     if printf '%s' "$out" | grep -qiE 'could not get lock|resource temporarily unavailable|dpkg was interrupted'; then
-      (( waited >= 180 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 180s" >&2; return 1; }
+      (( waited >= 600 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 600s" >&2; return 1; }
       sleep 5; waited=$((waited + 5))
       continue
     fi
@@ -157,7 +157,7 @@ apt_lock_retry() {
     fi
     rc=$?
     if printf '%s' "$out" | grep -qiE 'could not get lock|resource temporarily unavailable|dpkg was interrupted'; then
-      (( waited >= 180 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 180s" >&2; return 1; }
+      (( waited >= 600 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 600s" >&2; return 1; }
       sleep 5; waited=$((waited + 5))
       continue
     fi
