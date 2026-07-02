@@ -15,6 +15,8 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
       - '--storage.tsdb.retention.time=30d'
+      - '--web.external-url=https://77.50.132.85/prometheus/'
+      - '--web.route-prefix=/'
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
       interval: 30s
@@ -52,7 +54,8 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_USERS_ALLOW_SIGN_UP: false
       GF_SECURITY_DISABLE_GRAVATAR: true
-      GF_SERVER_ROOT_URL: http://localhost:3000
+      GF_SERVER_ROOT_URL: https://77.50.132.85/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: true
       GF_INSTALL_PLUGINS: ""
     depends_on:
       prometheus:
@@ -92,7 +95,8 @@ services:
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
-      - '--web.external-url=http://localhost:9093'
+      - '--web.external-url=https://77.50.132.85/alertmanager/'
+      - '--web.route-prefix=/'
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9093/-/healthy"]
       interval: 30s

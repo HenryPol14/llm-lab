@@ -40,12 +40,11 @@ table ip llm_lab_nat {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
 
-    # DNAT: публичный IP → nginx proxy (10.10.10.70)
-    iifname "${WAN_BRIDGE}" tcp dport 3000  dnat to "${NGINX_IP}:3000"
-    iifname "${WAN_BRIDGE}" tcp dport 8080  dnat to "${NGINX_IP}:8080"
-    iifname "${WAN_BRIDGE}" tcp dport 9090  dnat to "${NGINX_IP}:9090"
-    iifname "${WAN_BRIDGE}" tcp dport 9093  dnat to "${NGINX_IP}:9093"
-    iifname "${WAN_BRIDGE}" tcp dport 11434 dnat to "${NGINX_IP}:11434"
+    # DNAT: публичный IP → nginx proxy (10.10.10.70). nginx-proxy — единая
+    # точка входа по TLS (80 редиректит на 443), путевая маршрутизация
+    # (/grafana/, /prometheus/, /alertmanager/, /ollama/, /) настроена в
+    # 13-deploy-nginx-proxy.sh — отдельные DNAT на порты сервисов не нужны.
+    iifname "${WAN_BRIDGE}" tcp dport { 80, 443 } dnat to "${NGINX_IP}"
   }
 
   chain postrouting {
@@ -74,7 +73,7 @@ table inet llm_lab_filter {
     ip saddr "${NGINX_IP}" ip daddr "${MONITORING_IP}" tcp dport { 3000, 9090, 9093, 9100 } accept
 
     # DNAT forwarding: входящий трафик к nginx
-    ip daddr "${NGINX_IP}" tcp dport { 3000, 8080, 9090, 9093, 11434 } accept
+    ip daddr "${NGINX_IP}" tcp dport { 80, 443 } accept
 
     # Prometheus scraping: monitoring → llm node-exporter, gpu-exporter
     # + blackbox-exporter probes Ollama (11434) и OpenWebUI (3000)
@@ -124,11 +123,12 @@ verify_ruleset() {
 print_summary() {
   local pub_ip="${PROXMOX_HOST:-77.50.132.85}"
   info "nftables configured:"
-  info "  DNAT ${pub_ip}:3000  → ${NGINX_IP}:3000  (Grafana)"
-  info "  DNAT ${pub_ip}:8080  → ${NGINX_IP}:8080  (Open WebUI)"
-  info "  DNAT ${pub_ip}:9090  → ${NGINX_IP}:9090  (Prometheus)"
-  info "  DNAT ${pub_ip}:9093  → ${NGINX_IP}:9093  (Alertmanager)"
-  info "  DNAT ${pub_ip}:11434 → ${NGINX_IP}:11434 (Ollama API)"
+  info "  DNAT ${pub_ip}:80,443 → ${NGINX_IP} (nginx-proxy, TLS, path-based routing)"
+  info "  https://${pub_ip}/            → Open WebUI"
+  info "  https://${pub_ip}/ollama/     → Ollama API"
+  info "  https://${pub_ip}/prometheus/ → Prometheus"
+  info "  https://${pub_ip}/grafana/    → Grafana"
+  info "  https://${pub_ip}/alertmanager/ → Alertmanager"
 }
 
 backup_ruleset

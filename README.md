@@ -130,12 +130,18 @@ cd /root/llm-lab
 | Prometheus | `http://${MONITORING_IP}:9090` | Без auth |
 | Grafana | `http://${MONITORING_IP}:3000` | admin / admin (смените!) |
 
-**External access via nginx proxy:**
-- `http://${PROXMOX_HOST}:3000` → Grafana (10.10.10.60:3000)
-- `http://${PROXMOX_HOST}:8080` → OpenWebUI (10.10.10.50:3000)
-- `http://${PROXMOX_HOST}:9090` → Prometheus (10.10.10.60:9090)
-- `http://${PROXMOX_HOST}:9093` → Alertmanager (10.10.10.60:9093)
-- `http://${PROXMOX_HOST}:11434` → Ollama API (10.10.10.50:11434)
+**External access via nginx proxy (TLS, self-signed cert, единая точка входа):**
+- `https://${PROXMOX_HOST}/` → OpenWebUI (10.10.10.50:3000)
+- `https://${PROXMOX_HOST}/ollama/` → Ollama API (10.10.10.50:11434)
+- `https://${PROXMOX_HOST}/prometheus/` → Prometheus (10.10.10.60:9090)
+- `https://${PROXMOX_HOST}/grafana/` → Grafana (10.10.10.60:3000)
+- `https://${PROXMOX_HOST}/alertmanager/` → Alertmanager (10.10.10.60:9093)
+
+Grafana требует `GF_SERVER_ROOT_URL`/`GF_SERVER_SERVE_FROM_SUB_PATH=true` и
+`proxy_pass` без завершающего слэша (иначе редирект-петля на себя). Prometheus
+и Alertmanager настроены через `--web.external-url` + `--web.route-prefix=/`
+(префикс срезается nginx перед проксированием, route-prefix=/ говорит
+сервису этого и ожидать).
 
 ## Безопасность
 
