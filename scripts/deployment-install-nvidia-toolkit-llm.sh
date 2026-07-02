@@ -15,6 +15,11 @@ load_config
 TARGET="${1:-${LLM_IP:-}}"
 [[ -n "$TARGET" ]] || die "Target IP required. Usage: $0 <IP>"
 
+# Минимальная версия драйвера, которую требует текущий образ ollama/ollama
+# для CUDA-бэкенда (см. "NVIDIA driver too old ... required_driver" в логах
+# контейнера ollama, если версия ниже). Проверяй при апгрейде образа Ollama.
+NVIDIA_DRIVER_MAJOR="${NVIDIA_DRIVER_MAJOR:-570}"
+
 mark_step "Installing NVIDIA Container Toolkit on ${TARGET}"
 wait_for_ssh "$TARGET" 240
 ssh-keygen -R "$TARGET" >/dev/null 2>&1 || true
@@ -34,11 +39,12 @@ check_gpu_presence() {
 
 # ---------------------------------------------------------------------------
 install_nvidia_drivers() {
-  info "Installing NVIDIA drivers (latest production: 565)"
+  info "Installing NVIDIA drivers (production: ${NVIDIA_DRIVER_MAJOR})"
 
-  guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
+  guest_ssh "$TARGET" bash -s -- "$NVIDIA_DRIVER_MAJOR" <<'EOF'
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
+DRIVER_MAJOR="$1"
 
 # Свежезагруженная VM может ещё держать apt/dpkg lock из-за фонового
 # apt-daily/unattended-upgrades от cloud-init — ждём и повторяем, а не падаем.
@@ -66,24 +72,27 @@ fi
 # Обновляем кэш пакетов
 apt_lock_retry apt-get update -qq
 
-# Устанавливаем production драйвер (565) — идемпотентно
-apt_lock_retry apt-get install -y nvidia-driver-565-server
+# Устанавливаем production драйвер — идемпотентно
+apt_lock_retry apt-get install -y "nvidia-driver-${DRIVER_MAJOR}-server"
 
 echo "Driver package installed (kernel module not loaded until reboot)"
 EOF
 
-  # Проверяем загружен ли модуль
-  local loaded
-  loaded="$(guest_ssh "$TARGET" \
-    'sudo /usr/bin/nvidia-smi -L 2>/dev/null | wc -l' || echo 0)"
+  # Проверяем не просто "модуль загружен", а что загружена ИМЕННО нужная
+  # мажорная версия — апгрейд поверх уже загруженного старого модуля иначе
+  # тихо остаётся на старой версии до ручной перезагрузки.
+  local running_major
+  running_major="$(guest_ssh "$TARGET" \
+    'sudo /usr/bin/nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | cut -d. -f1' \
+    || echo '')"
 
-  if [[ "$loaded" -gt 0 ]]; then
-    info "NVIDIA kernel module already loaded (${loaded} GPU(s))"
+  if [[ "$running_major" == "$NVIDIA_DRIVER_MAJOR" ]]; then
+    info "NVIDIA driver ${NVIDIA_DRIVER_MAJOR} already loaded and active"
     return 0
   fi
 
-  # Модуль не загружен — нужна перезагрузка
-  info "NVIDIA module not loaded yet — rebooting VM to activate driver"
+  # Модуль не загружен, либо загружена другая версия — нужна перезагрузка
+  info "Active driver is '${running_major:-none}', need ${NVIDIA_DRIVER_MAJOR} — rebooting VM to activate"
   guest_ssh "$TARGET" 'sudo reboot' || true
   sleep 20
 

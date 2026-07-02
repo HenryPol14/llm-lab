@@ -17,7 +17,7 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       OLLAMA_MAX_LOADED_MODELS: 1
       OLLAMA_NUM_THREADS: 4
-      OLLAMA_FLASH_ATTN: 1
+      OLLAMA_FLASH_ATTENTION: "true"
 
     gpus: all
 
