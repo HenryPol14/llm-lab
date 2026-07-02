@@ -36,7 +36,27 @@ install_docker_packages() {
   info "Installing Docker Compose on ${TARGET}"
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
-apt-get update -qq
+export DEBIAN_FRONTEND=noninteractive
+
+# Свежезагруженная VM может ещё держать apt/dpkg lock из-за фонового
+# apt-daily/unattended-upgrades от cloud-init — ждём и повторяем, а не падаем.
+apt_lock_retry() {
+  local out rc=0 waited=0
+  while true; do
+    if out="$("$@" 2>&1)"; then
+      printf '%s\n' "$out"; return 0
+    fi
+    rc=$?
+    if printf '%s' "$out" | grep -qiE 'could not get lock|resource temporarily unavailable|dpkg was interrupted'; then
+      (( waited >= 180 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 180s" >&2; return 1; }
+      sleep 5; waited=$((waited + 5))
+      continue
+    fi
+    printf '%s\n' "$out" >&2; return "$rc"
+  done
+}
+
+apt_lock_retry apt-get update -qq
 
 if docker compose version >/dev/null 2>&1; then
   echo "Docker Compose already installed: $(docker compose version)"
@@ -45,7 +65,7 @@ fi
 
 for pkg in docker-compose-v2 docker-compose-plugin docker-compose; do
   if apt-cache show "$pkg" >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+    apt_lock_retry apt-get install -y "$pkg"
     break
   fi
 done

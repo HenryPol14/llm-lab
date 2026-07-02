@@ -34,12 +34,32 @@ mark_step "Deploying nginx proxy LXC ${NGINX_CTID}"
 # ---------------------------------------------------------------------------
 install_ssl_dependencies() {
   info "Installing SSL dependencies (openssl) in LXC ${NGINX_CTID}"
-  pct exec "$NGINX_CTID" -- bash -c "
-    set -Eeuo pipefail
-    apt-get update -qq
-    apt-get install -y -qq openssl
-    echo 'openssl installed'
-  " || warn "openssl installation skipped"
+  pct exec "$NGINX_CTID" -- bash -s <<'EOF' || warn "openssl installation skipped"
+set -Eeuo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# Свежесозданный LXC может ещё держать apt/dpkg lock из-за фонового
+# apt-daily от cloud-init — ждём и повторяем, а не падаем.
+apt_lock_retry() {
+  local out rc=0 waited=0
+  while true; do
+    if out="$("$@" 2>&1)"; then
+      printf '%s\n' "$out"; return 0
+    fi
+    rc=$?
+    if printf '%s' "$out" | grep -qiE 'could not get lock|resource temporarily unavailable|dpkg was interrupted'; then
+      (( waited >= 180 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 180s" >&2; return 1; }
+      sleep 5; waited=$((waited + 5))
+      continue
+    fi
+    printf '%s\n' "$out" >&2; return "$rc"
+  done
+}
+
+apt_lock_retry apt-get update -qq
+apt_lock_retry apt-get install -y -qq openssl
+echo 'openssl installed'
+EOF
 }
 
 # ---------------------------------------------------------------------------
@@ -123,14 +143,33 @@ wait_for_container() {
 
 install_nginx() {
   info "Installing nginx in container ${NGINX_CTID}"
-  pct exec "$NGINX_CTID" -- bash -c "
-    set -Eeuo pipefail
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y nginx curl
-    systemctl enable nginx
-    echo 'nginx installed'
-  "
+  pct exec "$NGINX_CTID" -- bash -s <<'EOF'
+set -Eeuo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# Свежесозданный LXC может ещё держать apt/dpkg lock из-за фонового
+# apt-daily от cloud-init — ждём и повторяем, а не падаем.
+apt_lock_retry() {
+  local out rc=0 waited=0
+  while true; do
+    if out="$("$@" 2>&1)"; then
+      printf '%s\n' "$out"; return 0
+    fi
+    rc=$?
+    if printf '%s' "$out" | grep -qiE 'could not get lock|resource temporarily unavailable|dpkg was interrupted'; then
+      (( waited >= 180 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 180s" >&2; return 1; }
+      sleep 5; waited=$((waited + 5))
+      continue
+    fi
+    printf '%s\n' "$out" >&2; return "$rc"
+  done
+}
+
+apt_lock_retry apt-get update -qq
+apt_lock_retry apt-get install -y nginx curl
+systemctl enable nginx
+echo 'nginx installed'
+EOF
 }
 
 configure_nginx() {

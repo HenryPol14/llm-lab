@@ -38,17 +38,36 @@ install_nvidia_drivers() {
 
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# Свежезагруженная VM может ещё держать apt/dpkg lock из-за фонового
+# apt-daily/unattended-upgrades от cloud-init — ждём и повторяем, а не падаем.
+apt_lock_retry() {
+  local out rc=0 waited=0
+  while true; do
+    if out="$("$@" 2>&1)"; then
+      printf '%s\n' "$out"; return 0
+    fi
+    rc=$?
+    if printf '%s' "$out" | grep -qiE 'could not get lock|resource temporarily unavailable|dpkg was interrupted'; then
+      (( waited >= 180 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 180s" >&2; return 1; }
+      sleep 5; waited=$((waited + 5))
+      continue
+    fi
+    printf '%s\n' "$out" >&2; return "$rc"
+  done
+}
 
 # Добавляем PPA для актуальных драйверов (идемпотентно)
 if ! grep -q "graphics-drivers/ppa" /etc/apt/sources.list.d/ubuntu-graphics-drivers.ppa 2>/dev/null; then
-  add-apt-repository -y ppa:graphics-drivers/ppa
+  apt_lock_retry add-apt-repository -y ppa:graphics-drivers/ppa
 fi
 
 # Обновляем кэш пакетов
-apt-get update -qq
+apt_lock_retry apt-get update -qq
 
-# Устанавливаем最新的 production драйвер (565) — идемпотентно
-DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-driver-565-server
+# Устанавливаем production драйвер (565) — идемпотентно
+apt_lock_retry apt-get install -y nvidia-driver-565-server
 
 echo "Driver package installed (kernel module not loaded until reboot)"
 EOF
@@ -102,6 +121,23 @@ install_nvidia_toolkit() {
 
   guest_ssh "$TARGET" 'sudo bash -s' <<'EOF'
 set -Eeuo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt_lock_retry() {
+  local out rc=0 waited=0
+  while true; do
+    if out="$("$@" 2>&1)"; then
+      printf '%s\n' "$out"; return 0
+    fi
+    rc=$?
+    if printf '%s' "$out" | grep -qiE 'could not get lock|resource temporarily unavailable|dpkg was interrupted'; then
+      (( waited >= 180 )) && { printf '%s\n' "$out" >&2; echo "apt lock timeout after 180s" >&2; return 1; }
+      sleep 5; waited=$((waited + 5))
+      continue
+    fi
+    printf '%s\n' "$out" >&2; return "$rc"
+  done
+}
 
 if dpkg -s nvidia-container-toolkit >/dev/null 2>&1; then
   echo "nvidia-container-toolkit already installed"
@@ -116,8 +152,8 @@ curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-contai
   | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
   | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
 
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit
+apt_lock_retry apt-get update -qq
+apt_lock_retry apt-get install -y nvidia-container-toolkit
 echo "nvidia-container-toolkit installed"
 EOF
 }
