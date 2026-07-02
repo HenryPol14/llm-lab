@@ -27,7 +27,7 @@ services:
       driver: json-file
       options:
         max-size: 100m
-        max-file: 3
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -38,7 +38,6 @@ services:
           memory: 1G
     security_opt:
       - no-new-privileges:true
-    read_only: false
 
   grafana:
     image: grafana/grafana:latest
@@ -52,8 +51,8 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_USERS_ALLOW_SIGN_UP: false
-      GF_SECURITY_DISABLE_GRAVATAR: true
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
       GF_SERVER_ROOT_URL: https://77.50.132.85/grafana/
       GF_SERVER_SERVE_FROM_SUB_PATH: true
       GF_INSTALL_PLUGINS: ""
@@ -70,7 +69,7 @@ services:
       driver: json-file
       options:
         max-size: 100m
-        max-file: 3
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -81,7 +80,6 @@ services:
           memory: 512M
     security_opt:
       - no-new-privileges:true
-    read_only: false
 
   alertmanager:
     image: prom/alertmanager:latest
@@ -91,6 +89,7 @@ services:
       - "9093:9093"
     volumes:
       - /mnt/data/alertmanager:/alertmanager
+      # FIX: добавлен маунт конфига — без него alertmanager падает при старте
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
@@ -107,7 +106,7 @@ services:
       driver: json-file
       options:
         max-size: 50m
-        max-file: 2
+        max-file: "2"
     deploy:
       resources:
         limits:
@@ -118,7 +117,6 @@ services:
           memory: 256M
     security_opt:
       - no-new-privileges:true
-    read_only: false
 
   node-exporter:
     image: prom/node-exporter:latest
@@ -142,12 +140,13 @@ services:
       driver: json-file
       options:
         max-size: 50m
-        max-file: 2
+        max-file: "2"
     security_opt:
       - no-new-privileges:true
       - apparmor:docker-default
     read_only: true
 
+  # FIX: добавлен blackbox-exporter — он был в prometheus.yml.tpl но отсутствовал в compose
   blackbox-exporter:
     image: prom/blackbox-exporter:latest
     container_name: blackbox-exporter
@@ -168,12 +167,12 @@ services:
       driver: json-file
       options:
         max-size: 50m
-        max-file: 2
+        max-file: "2"
     security_opt:
       - no-new-privileges:true
-    read_only: false
 
 networks:
   default:
     name: monitoring-network
     driver: bridge
+    

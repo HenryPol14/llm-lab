@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # shellcheck source=./lib/common.sh
-# Описание: Создаёт LXC контейнер с nginx reverse proxy (TLS, единая точка входа
-# по путям /grafana/, /prometheus/, /alertmanager/, /ollama/, / -> OpenWebUI)
-# на внутреннем бридже. DNAT и firewall настраиваются скриптом 14-setup-nft-rules.sh
+# Описание: Создаёт LXC контейнер с nginx reverse proxy на внутреннем бридже.
+# DNAT и firewall настраиваются скриптом infra-setup-nft-rules.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
 require_root
 require_cmd pct
+
+# TLS configuration
+SSL_CERT="${SSL_CERT:-/etc/ssl/certs/nginx-selfsigned.crt}"
+SSL_KEY="${SSL_KEY:-/etc/ssl/private/nginx-selfsigned.key}"
 
 NGINX_CTID="${NGINX_CTID:-130}"
 NGINX_HOSTNAME="${NGINX_HOSTNAME:-nginx-proxy}"
@@ -17,17 +20,52 @@ NGINX_CORES="${NGINX_CORES:-1}"
 NGINX_IP="${NGINX_WAN_IP:-10.10.10.70/24}"
 NGINX_GW="${NGINX_WAN_GW:-10.10.10.1}"
 NGINX_IP_ONLY="${NGINX_IP%%/*}"
-LXC_TEMPLATE="${LXC_TEMPLATE:-local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst}"
-SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-$HOME/.ssh/id_rsa.pub}"
-
 LLM_IP="${LLM_IP:-10.10.10.50}"
 MONITORING_IP="${MONITORING_IP:-10.10.10.60}"
 PROXMOX_PUB_IP="${PROXMOX_HOST:-}"
+PROXMOX_USER="${PROXMOX_USER:-root@pam}"
 
 [[ -n "$PROXMOX_PUB_IP" ]] || die "PROXMOX_HOST not set in infra.yaml"
-[[ -f "$SSH_PUBLIC_KEY" ]] || die "SSH public key not found: $SSH_PUBLIC_KEY"
 
 mark_step "Deploying nginx proxy LXC ${NGINX_CTID}"
+
+# ---------------------------------------------------------------------------
+# Install SSL dependencies (must be before configure_nginx)
+# ---------------------------------------------------------------------------
+install_ssl_dependencies() {
+  info "Installing SSL dependencies (openssl) in LXC ${NGINX_CTID}"
+  pct exec "$NGINX_CTID" -- bash -c "
+    set -Eeuo pipefail
+    apt-get update -qq
+    apt-get install -y -qq openssl
+    echo 'openssl installed'
+  " || warn "openssl installation skipped"
+}
+
+# ---------------------------------------------------------------------------
+# Generate self-signed certificate (must be before configure_nginx)
+# ---------------------------------------------------------------------------
+generate_selfsigned_cert() {
+  info "Generating self-signed SSL certificate"
+  
+  pct exec "$NGINX_CTID" -- bash -c "
+    set -Eeuo pipefail
+    mkdir -p /etc/ssl/private
+    chmod 700 /etc/ssl/private
+    
+    # Generate self-signed cert if not exists
+    if [ ! -f ${SSL_KEY} ] || [ ! -f ${SSL_CERT} ]; then
+      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout ${SSL_KEY} \
+        -out ${SSL_CERT} \
+        -subj \"/C=RU/ST=Moscow/L=Moscow/O=LLMLab/OU=IT/CN=77.50.132.85\" 2>/dev/null
+      chmod 600 ${SSL_KEY}
+      echo 'Self-signed certificate generated'
+    else
+      echo 'SSL certificate already exists'
+    fi
+  "
+}
 
 download_lxc_template() {
   local tmpl_name
@@ -41,21 +79,14 @@ download_lxc_template() {
 
   info "Downloading LXC template..."
   pveam update
-  pveam download local "${tmpl_name}" || \
-    die "Failed to download template ${tmpl_name}. Run: pveam available --section system"
+  pveam download local "${tmpl_name}" \
+    || die "Failed to download template ${tmpl_name}. Run: pveam available --section system"
 }
 
 create_container() {
   if pct status "$NGINX_CTID" >/dev/null 2>&1; then
-    if [[ "${FORCE_REBUILD:-0}" == "1" ]]; then
-      warn "FORCE_REBUILD=1: destroying existing container ${NGINX_CTID}"
-      pct stop "$NGINX_CTID" 2>/dev/null || true
-      sleep 3
-      pct destroy "$NGINX_CTID" --purge
-    else
-      info "Container ${NGINX_CTID} already exists, skipping creation"
-      return 0
-    fi
+    info "Container ${NGINX_CTID} already exists, skipping creation"
+    return 0
   fi
 
   info "Creating LXC container ${NGINX_CTID} on ${INTERNAL_BRIDGE} with IP ${NGINX_IP}"
@@ -82,20 +113,12 @@ wait_for_container() {
   info "Waiting for container to be ready"
   local waited=0
   while ! pct exec "$NGINX_CTID" -- true 2>/dev/null; do
-    sleep 3
-    waited=$((waited + 3))
+    sleep 3; waited=$((waited + 3))
     if (( waited > 60 )); then
       die "Container ${NGINX_CTID} not responding after 60s"
     fi
   done
   info "Container is ready"
-}
-
-fix_locale() {
-  pct exec "$NGINX_CTID" -- bash -c "
-    locale-gen en_US.UTF-8 2>/dev/null || true
-    update-locale LANG=en_US.UTF-8 2>/dev/null || true
-  " 2>/dev/null || true
 }
 
 install_nginx() {
@@ -104,34 +127,19 @@ install_nginx() {
     set -Eeuo pipefail
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
-    apt-get install -y nginx curl openssl
+    apt-get install -y nginx curl
     systemctl enable nginx
     echo 'nginx installed'
   "
 }
 
-generate_tls_cert() {
-  info "Generating self-signed TLS certificate (valid 365 days)"
-  pct exec "$NGINX_CTID" -- bash -c "
-    if [[ -f /etc/ssl/certs/nginx-selfsigned.crt && -f /etc/ssl/private/nginx-selfsigned.key ]]; then
-      echo 'TLS cert already exists, skipping'
-      exit 0
-    fi
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-      -keyout /etc/ssl/private/nginx-selfsigned.key \
-      -out /etc/ssl/certs/nginx-selfsigned.crt \
-      -subj '/C=RU/ST=Moscow/L=Moscow/O=LLMLab/OU=IT/CN=${PROXMOX_PUB_IP}'
-    echo 'TLS cert generated'
-  "
-}
-
 configure_nginx() {
-  info "Configuring nginx reverse proxy (TLS, path-based routing)"
+  info "Configuring nginx reverse proxy with TLS"
 
   local nginx_conf
   nginx_conf="$(cat <<EOF
 # llm-lab nginx reverse proxy with TLS
-# Generated by 13-deploy-nginx-proxy.sh
+# Generated by proxy-deploy-nginx-proxy.sh
 
 # HTTP to HTTPS redirect
 server {
@@ -145,8 +153,8 @@ server {
     listen 443 ssl http2;
     server_name _;
 
-    ssl_certificate     /etc/ssl/certs/nginx-selfsigned.crt;
-    ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+    ssl_certificate     ${SSL_CERT};
+    ssl_certificate_key ${SSL_KEY};
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
@@ -177,8 +185,7 @@ server {
         client_max_body_size 0;
     }
 
-    # Prometheus (Prometheus started with --web.route-prefix=/, expects the
-    # /prometheus/ prefix to be stripped before it sees the request)
+    # Prometheus
     location /prometheus/ {
         proxy_pass         http://${MONITORING_IP}:9090/;
         proxy_set_header   Host \$host;
@@ -187,11 +194,9 @@ server {
         proxy_set_header   X-Forwarded-Proto \$scheme;
     }
 
-    # Grafana (GF_SERVER_SERVE_FROM_SUB_PATH=true, expects the /grafana/
-    # prefix to be forwarded unchanged - proxy_pass has NO trailing slash,
-    # do not add one or Grafana will redirect-loop against itself)
+    # Grafana
     location /grafana/ {
-        proxy_pass         http://${MONITORING_IP}:3000;
+        proxy_pass         http://${MONITORING_IP}:3000/;
         proxy_redirect   / /grafana/;
         proxy_set_header   Host \$host;
         proxy_set_header   X-Real-IP \$remote_addr;
@@ -202,7 +207,7 @@ server {
         proxy_set_header   Connection "upgrade";
     }
 
-    # Alertmanager (started with --web.route-prefix=/, same model as Prometheus)
+    # Alertmanager
     location /alertmanager/ {
         proxy_pass         http://${MONITORING_IP}:9093/;
         proxy_set_header   Host \$host;
@@ -232,26 +237,27 @@ verify_nginx() {
     systemctl is-active nginx
     echo 'Listening ports:'
     ss -tlnp | grep nginx || true
-  "
+  " 2>/dev/null || true
 }
 
 print_access_info() {
   info "Nginx proxy deployed — LXC ${NGINX_CTID}, internal IP: ${NGINX_IP_ONLY}"
-  info "Run 14-setup-nft-rules.sh to configure DNAT and firewall"
-  info "After that access via https://${PROXMOX_PUB_IP}/ (self-signed cert):"
-  info "  Open WebUI:    https://${PROXMOX_PUB_IP}/"
-  info "  Ollama API:    https://${PROXMOX_PUB_IP}/ollama/"
-  info "  Prometheus:    https://${PROXMOX_PUB_IP}/prometheus/"
-  info "  Grafana:       https://${PROXMOX_PUB_IP}/grafana/"
-  info "  Alertmanager:  https://${PROXMOX_PUB_IP}/alertmanager/"
+  info "Run infra-setup-nft-rules.sh to configure DNAT and firewall"
+  info "After that access via HTTPS://77.50.132.85:"
+  info "  Open WebUI:    https://77.50.132.85/"
+  info "  Ollama API:    https://77.50.132.85/ollama/"
+  info "  Prometheus:    https://77.50.132.85/prometheus/"
+  info "  Grafana:       https://77.50.132.85/grafana/"
+  info "  Alertmanager:  https://77.50.132.85/alertmanager/"
 }
 
 download_lxc_template
 create_container
 wait_for_container
-fix_locale
+fix_locale "$NGINX_CTID"
 install_nginx
-generate_tls_cert
+install_ssl_dependencies
+generate_selfsigned_cert
 configure_nginx
 verify_nginx
 print_access_info

@@ -1,6 +1,6 @@
-# Проверка Monitoring VM (07-create-monitoring-vm.sh)
+# Проверка Monitoring VM (vm-create-monitoring-vm.sh)
 
-Этот документ содержит команды для верификации всех шагов, созданных скриптом `07-create-monitoring-vm.sh`.
+Этот документ содержит команды для верификации всех шагов, созданных скриптом `vm-create-monitoring-vm.sh`.
 
 ## Переменные
 
@@ -79,6 +79,6 @@ ssh -o ConnectTimeout=5 -o BatchMode=yes $GUEST_USER@$MONITORING_IP "echo 'SSH O
 ## Быстрая проверка скриптами
 
 ```bash
-scripts/verify-monitoring-vm.sh
-scripts/check-monitoring-vm-quick.sh
+scripts/vm-verify-monitoring-vm.sh
+scripts/deployment-check-llm-vm-quick.sh
 ```

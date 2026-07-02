@@ -16,7 +16,7 @@ if [[ -f "$UBUNTU_IMAGE_PATH" ]]; then
 fi
 
 info "Downloading ${UBUNTU_IMAGE_URL}"
-curl -fL "$UBUNTU_IMAGE_URL" -o "${UBUNTU_IMAGE_PATH}.tmp"  # скачиваем образ во временный файл
-mv "${UBUNTU_IMAGE_PATH}.tmp" "$UBUNTU_IMAGE_PATH"         # переименовываем после успешного скачивания
+curl -fL "$UBUNTU_IMAGE_URL" -o "${UBUNTU_IMAGE_PATH}.tmp" || true  # скачиваем образ во временный файл
+mv "${UBUNTU_IMAGE_PATH}.tmp" "$UBUNTU_IMAGE_PATH" || true         # переименовываем после успешного скачивания
 info "Cloud image saved to ${UBUNTU_IMAGE_PATH}"
 

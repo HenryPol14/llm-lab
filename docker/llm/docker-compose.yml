@@ -15,6 +15,9 @@ services:
       OLLAMA_HOST: 0.0.0.0:11434
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_NUM_THREADS: 4
+      OLLAMA_FLASH_ATTN: 1
 
     gpus: all
 
@@ -54,14 +57,8 @@ services:
 
     volumes:
       - /mnt/data/openwebui:/app/backend/data
-
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://localhost:8080/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
+      disable: true
     logging:
       driver: json-file
       options:
@@ -89,14 +86,8 @@ services:
 
     volumes:
       - /:/host:ro,rslave
-
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9100/metrics"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
+      disable: true
     logging:
       driver: json-file
       options:

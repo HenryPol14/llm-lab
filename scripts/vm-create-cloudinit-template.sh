@@ -34,9 +34,12 @@ if [[ ! -f "$PREPARED_IMAGE_PATH" || "${FORCE_REBUILD:-0}" == "1" ]]; then
   info "Preparing cloud image with guest packages: ${PREPARED_IMAGE_PATH}"
   cp "$UBUNTU_IMAGE_PATH" "$PREPARED_IMAGE_PATH"                    # копируем образ для подготовки шаблона
   virt-customize -a "$PREPARED_IMAGE_PATH" \
-    --install qemu-guest-agent,cloud-init,docker.io,htop,curl,git,jq,nvtop,pciutils,cloud-guest-utils,gdisk,parted,ca-certificates,gnupg,lsb-release,ubuntu-drivers-common,docker-compose-v2,rsync \
+    --install qemu-guest-agent,cloud-init,cloud-initramfs-dyn-net-conf,iproute2,openssh-server,ssh,curl,git,jq,nvtop,pciutils,cloud-guest-utils,gdisk,parted,ca-certificates,gnupg,lsb-release,ubuntu-drivers-common,rsync \
     --run-command 'systemctl enable qemu-guest-agent' \
-    --run-command 'systemctl enable docker' \
+    --run-command 'systemctl enable ssh' \
+    --run-command 'systemctl enable cloud-init' \
+    --run-command 'systemctl enable cloud-config' \
+    --run-command 'systemctl enable cloud-final' \
     --run-command 'mkdir -p /etc/sysctl.d' \
     --run-command 'printf "vm.swappiness=5\nvm.max_map_count=1048576\nfs.inotify.max_user_watches=1048576\n" >/etc/sysctl.d/99-llm-lab.conf' \
     --run-command 'cloud-init clean' \

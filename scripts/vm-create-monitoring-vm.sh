@@ -42,6 +42,11 @@ clone_vm_if_needed() {
 
 configure_vm() {
   info "Configuring Monitoring VM hardware..."
+  # Skip network config for existing VM - cloud-init already applied
+  if vm_exists "$MONITORING_VMID" && vm_running "$MONITORING_VMID"; then
+    info "VM ${MONITORING_VMID} already running, skipping network reconfiguration"
+    return 0
+  fi
   qm_command set "$MONITORING_VMID" \
     --name "$MONITORING_NAME" \
     --memory "$MONITORING_MEMORY_MB" \
@@ -75,8 +80,11 @@ start_and_wait_vm() {
   fi
   info "Waiting for Guest Agent to become ready..."
   guest_is_ready "$MONITORING_VMID" 240 || die "VM ${MONITORING_VMID} not ready"
-  info "Waiting for cloud-init to complete..."
-  wait_for_cloud_init "$MONITORING_VMID" 300 || die "cloud-init failed on VM ${MONITORING_VMID}"
+  info "Checking SSH access..."
+  wait_for_ssh "$MONITORING_IP" 120 || die "SSH not ready on VM ${MONITORING_VMID}"
+  if ! check_guest_network "$MONITORING_VMID" "$MONITORING_IP" 120; then
+    die "Guest network not configured on VM ${MONITORING_VMID} (expected IP: ${MONITORING_IP})"
+  fi
   check_system_running "$MONITORING_VMID" || die "System check failed for VM ${MONITORING_VMID}"
 }
 
@@ -89,7 +97,7 @@ sgdisk -e /dev/sda || true
 partprobe /dev/sda || true
 growpart /dev/sda 1 || true
 resize2fs /dev/sda1 || true
-'
+ '
 }
 
 ensure_monitoring_data_disk_ready() {
@@ -159,7 +167,7 @@ fi
 # Ждём пока blkid увидит UUID — udev может запаздывать после mkfs
 UUID=""
 for _ in $(seq 1 15); do
-  UUID=$(blkid -s UUID -o value "$PART" 2>/dev/null || true)
+  UUID="$(blkid -s UUID -o value "$PART" 2>/dev/null || true)"
   [[ -n "$UUID" ]] && break
   sleep 1
 done
@@ -178,7 +186,11 @@ mount -a
 mountpoint -q "$MOUNT"
 findmnt "$MOUNT"
 mkdir -p "$MOUNT/prometheus" "$MOUNT/grafana" "$MOUNT/alertmanager"
-chown -R "${GUEST_USER}:${GUEST_USER}" "$MOUNT"
+# Prometheus и alertmanager работают от nobody (65534)
+chown -R 65534:65534 "$MOUNT/prometheus"
+chown -R 65534:65534 "$MOUNT/alertmanager"
+# Grafana работает от uid 472
+chown -R 472:472 "$MOUNT/grafana"
 df -h "$MOUNT"
 REMOTE
 }

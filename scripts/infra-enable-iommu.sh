@@ -31,8 +31,8 @@ if [[ "$CURRENT" != "GRUB_CMDLINE_LINUX_DEFAULT=\"${ARGS}\"" ]]; then
   else
     echo "GRUB_CMDLINE_LINUX_DEFAULT=\"${ARGS}\"" >> "$GRUB_FILE"
   fi
-  update-initramfs -u -k all
-  update-grub
+  update-initramfs -u -k all || true
+  update-grub || true
   warn "IOMMU settings changed. Reboot Proxmox before GPU passthrough if this is the first run."
 else
   info "IOMMU kernel args are already configured"

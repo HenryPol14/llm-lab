@@ -35,14 +35,20 @@ bilg_check_existing_vm() {
 }
 
 clone_vm_if_needed() {
-  if ! bilg_check_existing_vm; then
-    info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
-    qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"  # клон шаблона для LLM VM
+  if bilg_check_existing_vm; then
+    return 0  # skip clone and config for existing VM
   fi
+  info "Cloning template ${TEMPLATE_VMID} to VM ${LLM_VMID} on ${LLM_STORAGE}"
+  qm_command clone "$TEMPLATE_VMID" "$LLM_VMID" --name "$LLM_NAME" --full true --storage "$LLM_STORAGE"  # клон шаблона для LLM VM
 }
 
 configure_vm() {
   info "Configuring hardware and cloud-init network settings..."
+  # Skip network config for existing VM - cloud-init already applied
+  if vm_exists "$LLM_VMID" && vm_running "$LLM_VMID"; then
+    info "VM ${LLM_VMID} already running, skipping network reconfiguration"
+    return 0
+  fi
   qm_command set "$LLM_VMID" \
     --name "$LLM_NAME" \
     --memory "$LLM_MEMORY_MB" \
@@ -116,6 +122,14 @@ stop_vm_for_gpu_passthrough_change() {
   if vm_running "$LLM_VMID"; then
     qm_command stop "$LLM_VMID"
   fi
+
+  info "Waiting for VM ${LLM_VMID} to fully stop..."
+  for _ in $(seq 1 20); do
+    if ! vm_running "$LLM_VMID"; then
+      break
+    fi
+    sleep 1
+  done
 }
 
 setup_gpu_passthrough() {
@@ -188,19 +202,43 @@ verify_gpu_passthrough() {
 }
 
 start_and_wait_vm() {
+  local current_status status_output
+  status_output="$(qm status "$LLM_VMID" 2>&1)"
+  current_status="${status_output//[$'\r\n']/ }"
+  info "VM ${LLM_VMID} current status: ${current_status}"
+  info "VM ${LLM_VMID} status raw: ${status_output}"
   if ! vm_running "$LLM_VMID"; then
-    qm_command start "$LLM_VMID"  # запускаем VM, если она еще не запущена
+    info "VM ${LLM_VMID} is not running, starting..."
+    if is_dry_run; then
+      info "[DRY RUN] Would start VM ${LLM_VMID}"; return 0
+    fi
+    if ! qm start "$LLM_VMID" 2>&1; then
+      warn "qm start returned non-zero, checking if VM actually started..."
+      sleep 3
+      if vm_running "$LLM_VMID"; then
+        info "VM ${LLM_VMID} started despite warning"
+      else
+        die "VM ${LLM_VMID} failed to start. Current status: $(qm status "$LLM_VMID" 2>&1)"
+      fi
+    fi
+    sleep 5
+    if ! vm_running "$LLM_VMID"; then
+      die "VM ${LLM_VMID} failed to start. Current status: $(qm status "$LLM_VMID" 2>&1)"
+    fi
+    info "VM ${LLM_VMID} started successfully"
+  else
+    info "VM ${LLM_VMID} is already running"
   fi
   
   info "Waiting for Guest Agent to become ready..."
   guest_is_ready "$LLM_VMID" 240 || die "VM ${LLM_VMID} not ready (Agent timeout)"
   
-  info "Waiting for cloud-init to complete..."
-  wait_for_cloud_init "$LLM_VMID" 300 || die "cloud-init failed on VM ${LLM_VMID}"
-  
-  if ! check_guest_network "$LLM_VMID" "$LLM_IP" 120; then
-    die "Guest network not configured on VM ${LLM_VMID} (expected IP: ${LLM_IP})"
-  fi
+  info "Checking SSH access..."
+  wait_for_ssh "$LLM_IP" 120 || die "SSH not ready on VM ${LLM_VMID}"
+    
+    if ! check_guest_network "$LLM_VMID" "$LLM_IP" 120; then
+      die "Guest network not configured on VM ${LLM_VMID} (expected IP: ${LLM_IP})"
+    fi
 
   check_system_running "$LLM_VMID" || die "System check failed for VM ${LLM_VMID}"
 
@@ -276,7 +314,7 @@ fi
 # Ждём пока blkid увидит UUID — udev может запаздывать после mkfs
 UUID=""
 for _ in $(seq 1 15); do
-  UUID=$(blkid -s UUID -o value "$PART" 2>/dev/null || true)
+  UUID="$(blkid -s UUID -o value "$PART" 2>/dev/null || true)"
   [[ -n "$UUID" ]] && break
   sleep 1
 done

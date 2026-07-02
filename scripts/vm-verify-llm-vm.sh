@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck source=./lib/common.sh
-# Скрипт для верификации всех компонентов, созданных скриптом 06-create-llm-vm.sh
+# Скрипт для верификации всех компонентов, созданных скриптом vm-create-llm-vm.sh
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 load_config
@@ -50,11 +49,11 @@ echo "✓ Balloon: $BALLOON (ожидается: 0)"
 echo "✓ NUMA: $NUMA (ожидается: 1)"
 
 # 7. Guest Agent
-AGENT=$(qm config "$LLM_VMID" | grep "^agent:" | awk '{print $2}')
+AGENT=$(qm config "$LLM_VMID" | grep "^agent:" | awk '{print $2}' || true)
 echo "✓ Guest Agent: $AGENT (ожидается: enabled=1)"
 
 # 8. Системный диск
-DISK_SCSI0=$(qm config "$LLM_VMID" | grep "^scsi0:")
+DISK_SCSI0=$(qm config "$LLM_VMID" | grep "^scsi0:" || true)
 if [[ -n "$DISK_SCSI0" ]]; then
   echo "✓ Системный диск (scsi0) присутствует"
   echo "  $DISK_SCSI0"
@@ -63,7 +62,7 @@ else
 fi
 
 # 9. Диск данных
-DISK_SCSI1=$(qm config "$LLM_VMID" | grep "^scsi1:")
+DISK_SCSI1=$(qm config "$LLM_VMID" | grep "^scsi1:" || true)
 if [[ -n "$DISK_SCSI1" ]]; then
   echo "✓ Диск данных (scsi1) присутствует"
   echo "  $DISK_SCSI1"
@@ -72,7 +71,7 @@ else
 fi
 
 # 10. Сетевой интерфейс
-NET0=$(qm config "$LLM_VMID" | grep "^net0:")
+NET0=$(qm config "$LLM_VMID" | grep "^net0:" || true)
 echo "✓ Сетевой интерфейс (net0):"
 echo "  $NET0"
 
@@ -116,9 +115,9 @@ guest_exec_raw() {
 guest_exec() {
   local raw
   local status
-  raw="$(guest_exec_raw "$@")"
+  raw="$(guest_exec_raw "$@")" || true
   status="$?"
-  parse_qm_guest_exec_output "$raw"
+  parse_qm_guest_exec_output "$raw" || true
   if [[ "$raw" == *'"exitcode"'* ]]; then
     local remote_status
     remote_status="$(printf '%s\n' "$raw" | sed -n 's/.*"exitcode"[[:space:]]*:[[:space:]]*\([0-9]\+\).*/\1/p' | tail -n1)"
@@ -135,7 +134,7 @@ echo "✓ IP конфигурация внутри VM:"
 echo "  $IP_CONFIG"
 
 # 2. Проверка наличия целевого IP
-if guest_exec ip addr show | grep -q "$LLM_IP"; then
+if guest_exec ip addr show | grep -q "$LLM_IP" || true; then
   echo "✓ Целевой IP $LLM_IP присутствует"
 else
   echo "✗ Целевой IP $LLM_IP не найден"
@@ -143,7 +142,7 @@ fi
 
 # 3. Диски
 echo "✓ Диски внутри VM:"
-guest_exec lsblk | head -10 || echo "  (не удалось получить информацию)"
+guest_exec lsblk 2>/dev/null || true | head -10 || echo "  (не удалось получить информацию)"
 
 # 4. Монтирование /mnt/data
 if guest_exec test -d "/mnt/data"; then
@@ -154,14 +153,14 @@ if guest_exec test -d "/mnt/data"; then
   echo "  $MOUNT_INFO" | tail -1
   
   # Проверка подпапок
-  SUBDIRS=$(guest_exec ls -la /mnt/data/ | grep "^d")
-  if echo "$SUBDIRS" | grep -q "ollama"; then
-    echo "✓ Подпапка /mnt/data/ollama существует"
-  fi
-  if echo "$SUBDIRS" | grep -q "models"; then
-    echo "✓ Подпапка /mnt/data/models существует"
-  fi
-  if echo "$SUBDIRS" | grep -q "docker"; then
+   SUBDIRS=$(guest_exec ls -la /mnt/data/ | grep "^d" || true)
+   if echo "$SUBDIRS" | grep -q "ollama" || true; then
+     echo "✓ Подпапка /mnt/data/ollama существует"
+   fi
+   if echo "$SUBDIRS" | grep -q "models" || true; then
+     echo "✓ Подпапка /mnt/data/models существует"
+   fi
+  if echo "$SUBDIRS" | grep -q "docker" || true; then
     echo "✓ Подпапка /mnt/data/docker существует"
   fi
 else
@@ -170,7 +169,7 @@ fi
 
 # 5. Проверка fstab
 echo "✓ Содержимое /etc/fstab (для /mnt/data):"
-guest_exec grep "llm-data" /etc/fstab 2>/dev/null || echo "  (запись не найдена)"
+guest_exec grep "llm-data" /etc/fstab 2>/dev/null || echo "  (запись не найдена)" || true
 
 # 6. Пользователь
 if guest_exec id "$GUEST_USER" >/dev/null 2>&1; then
@@ -194,7 +193,7 @@ if guest_exec command -v docker >/dev/null 2>&1; then
   # Проверка конфига daemon.json
   if guest_exec test -f /etc/docker/daemon.json 2>/dev/null; then
     echo "✓ /etc/docker/daemon.json существует"
-    DOCKER_ROOT=$(guest_exec grep "data-root" /etc/docker/daemon.json 2>/dev/null || echo "не найдено")
+    DOCKER_ROOT=$(guest_exec grep "data-root" /etc/docker/daemon.json 2>/dev/null || echo "не найдено" || true)
     echo "  Docker root: $DOCKER_ROOT"
   fi
 else
@@ -202,8 +201,8 @@ else
 fi
 
 # 8. Cloud-init статус
-CLOUD_INIT=$(guest_exec cloud-init status 2>/dev/null)
-if echo "$CLOUD_INIT" | grep -q "done"; then
+CLOUD_INIT=$(guest_exec cloud-init status 2>/dev/null || true)
+if echo "$CLOUD_INIT" | grep -q "done" || true; then
   echo "✓ Cloud-init завершен"
 else
   echo "⚠ Cloud-init статус: $CLOUD_INIT"
