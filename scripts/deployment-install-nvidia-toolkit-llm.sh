@@ -41,7 +41,7 @@ check_gpu_presence() {
 install_nvidia_drivers() {
   info "Installing NVIDIA drivers (production: ${NVIDIA_DRIVER_MAJOR})"
 
-  guest_ssh "$TARGET" bash -s -- "$NVIDIA_DRIVER_MAJOR" <<'EOF'
+  guest_ssh "$TARGET" sudo bash -s -- "$NVIDIA_DRIVER_MAJOR" <<'EOF'
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 DRIVER_MAJOR="$1"
