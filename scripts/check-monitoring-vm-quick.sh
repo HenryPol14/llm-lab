@@ -1,38 +1,59 @@
 #!/usr/bin/env bash
-# Быстрый справочник команд для проверки Monitoring VM
+# shellcheck source=./lib/common.sh
+# Описание: Быстрая диагностика Monitoring VM (созданной 07-create-monitoring-vm.sh).
+# Выполняет проверки на Proxmox-хосте и (если VM запущена) внутри неё.
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+load_config
 
-VMID=${MONITORING_VMID:-120}
+VMID="${MONITORING_VMID:-120}"
 MONITORING_IP="${MONITORING_IP:-10.10.10.60}"
 GUEST_USER="${GUEST_USER:-ubuntu}"
 
-echo "=== Проверка Monitoring VM ==="
-echo "VMID: $VMID"
-echo "Monitoring IP: $MONITORING_IP"
-echo "Guest user: $GUEST_USER"
+echo "=== ИНФОРМАЦИЯ О VM ==="
+echo "Статус VM:"
+qm status "$VMID" || true
 
-printf '\n# Статус VM\n'
-echo "qm status \"$VMID\""
+printf '\nКонфигурация VM:\n'
+qm config "$VMID" | grep -E "^(name|memory|cores|cpu|balloon|numa|agent|scsi|net|ciuser|ipconfig0):" || true
 
-printf '\n# Конфигурация VM\n'
-echo "qm config \"$VMID\" | grep -E '^(name|memory|cores|cpu|balloon|numa|agent|scsi|net|ciuser|ipconfig0):'"
+printf '\nСистемный диск:\n'
+qm config "$VMID" | grep "^scsi0:" || true
 
-printf '\n# Системный диск\n'
-echo "qm config \"$VMID\" | grep '^scsi0:'"
+printf '\nДиск данных:\n'
+qm config "$VMID" | grep "^scsi1:" || true
 
-printf '\n# Диск данных\n'
-echo "qm config \"$VMID\" | grep '^scsi1:'"
+printf '\nВсе параметры VM (полный список):\n'
+qm config "$VMID" || true
 
-printf '\n# IP внутри VM\n'
-echo "qm guest exec \"$VMID\" -- ip -4 addr show"
+# ========== ПРОВЕРКА ВНУТРИ VM (если VM запущена) ==========
 
-printf '\n# Содержимое /mnt/data\n'
-echo "qm guest exec \"$VMID\" -- ls -lah /mnt/data"
+printf '\n\n=== ПРОВЕРКА ВНУТРИ VM ===\n'
 
-printf '\n# Запись fstab\n'
-echo "qm guest exec \"$VMID\" -- grep '/mnt/data' /etc/fstab"
+echo "IP адрес VM:"
+qm guest exec "$VMID" -- ip -4 addr show || true
 
-printf '\n# Проверка пользователя\n'
-echo "qm guest exec \"$VMID\" -- id \"$GUEST_USER\""
+printf '\nМонтирование дисков:\n'
+qm guest exec "$VMID" -- df -h || true
 
-printf '\n# SSH доступ\n'
-echo "ssh -o ConnectTimeout=5 \"${GUEST_USER}@${MONITORING_IP}\" 'echo SSH OK'"
+printf '\nСодержимое /mnt/data:\n'
+qm guest exec "$VMID" -- ls -lah /mnt/data 2>/dev/null || echo "Директория не найдена"
+
+printf '\nЗапись /mnt/data в /etc/fstab:\n'
+qm guest exec "$VMID" -- grep "/mnt/data" /etc/fstab 2>/dev/null || echo "Запись не найдена"
+
+printf '\nПользователь %s:\n' "$GUEST_USER"
+qm guest exec "$VMID" -- id "$GUEST_USER" || true
+
+printf '\nКонтейнеры Docker:\n'
+qm guest exec "$VMID" -- docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "Docker недоступен"
+
+# ========== SSH ДОСТУП ==========
+
+printf '\n\n=== SSH ДОСТУП ===\n'
+
+echo "Проверка SSH подключения:"
+ssh -o ConnectTimeout=5 -o BatchMode=yes "${GUEST_USER}@${MONITORING_IP}" "echo 'SSH работает'" \
+  && echo "✓ SSH успешно" || echo "✗ SSH не работает"
+
+printf '\nПодключение к VM:\n'
+echo "ssh ${GUEST_USER}@${MONITORING_IP}"

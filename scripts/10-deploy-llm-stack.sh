@@ -33,7 +33,8 @@ transfer_stack() {
   # Опции SCP для копирования файлов
   SCP_OPTS="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
   # Копируем docker compose файлы на удаленную машину
-  scp ${SCP_OPTS} -r "${PROJECT_ROOT}/docker/llm/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"  # shellcheck disable=SC2086
+  # shellcheck disable=SC2086
+  scp ${SCP_OPTS} -r "${PROJECT_ROOT}/docker/llm/." "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
 }
 
 check_existing_containers() {

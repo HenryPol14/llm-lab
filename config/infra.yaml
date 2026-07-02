@@ -56,9 +56,8 @@ nginx_proxy:
   disk_gb: 8
   memory_mb: 512
   cores: 1
-  nginx_proxy:
-  wan_ip: "10.10.10.70/24"  # ← публичный IP/prefix Proxmox хоста
-  wan_gw: "10.10.10.1"    # ← шлюз провайдера (уточните)
+  wan_ip: "10.10.10.70/24"  # IP nginx-proxy на внутреннем бридже (DNAT с публичного IP настраивается в 14-setup-nft-rules.sh)
+  wan_gw: "10.10.10.1"
   lxc_template: "local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
 
 guest:

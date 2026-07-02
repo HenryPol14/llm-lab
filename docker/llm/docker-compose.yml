@@ -91,7 +91,7 @@ services:
       - /:/host:ro,rslave
 
     healthcheck:
-      test: ["CMD", "curl", "--spider", "-q", "http://localhost:9100/metrics"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9100/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3

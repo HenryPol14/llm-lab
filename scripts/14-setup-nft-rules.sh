@@ -76,8 +76,9 @@ table inet llm_lab_filter {
     # DNAT forwarding: входящий трафик к nginx
     ip daddr "${NGINX_IP}" tcp dport { 3000, 8080, 9090, 9093, 11434 } accept
 
-    # Prometheus scraping: monitoring → llm node-exporter и gpu-exporter
-    ip saddr "${MONITORING_IP}" ip daddr "${LLM_IP}" tcp dport { 9100, 9400 } accept
+    # Prometheus scraping: monitoring → llm node-exporter, gpu-exporter
+    # + blackbox-exporter probes Ollama (11434) и OpenWebUI (3000)
+    ip saddr "${MONITORING_IP}" ip daddr "${LLM_IP}" tcp dport { 3000, 9100, 9400, 11434 } accept
 
     # Запрет трафика между VM (кроме разрешённого выше)
     ip saddr "${INTERNAL_SUBNET}" ip daddr "${INTERNAL_SUBNET}" drop

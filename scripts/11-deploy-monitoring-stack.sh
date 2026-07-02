@@ -101,9 +101,10 @@ transfer_stack() {
   local tmp_dir="$1"
   local opts="${SSH_OPTS:--o StrictHostKeyChecking=accept-new}"
   info "Transferring monitoring stack"
+  # shellcheck disable=SC2086
   scp -r ${opts} \
     "${tmp_dir}/." \
-    "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"  # shellcheck disable=SC2086
+    "${GUEST_USER}@${TARGET}:${REMOTE_STACK}/"
 }
 
 check_existing_containers() {
