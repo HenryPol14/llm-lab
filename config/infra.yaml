@@ -32,7 +32,7 @@ llm_vm:
   name: "llm-server"
   ip: "10.10.10.50"
   prefix: 24
-  memory_mb: 16384
+  memory_mb: 20480
   cores: 4
   system_disk_gb: 40
   data_disk_gb: 120
