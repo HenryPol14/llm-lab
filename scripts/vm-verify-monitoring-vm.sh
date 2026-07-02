@@ -58,9 +58,9 @@ CPU=$(qm config "$MONITORING_VMID" | grep "^cpu:" | awk '{print $2}')
 echo "✓ CPU: $CPU (ожидается: host)"
 
 BALLOON=$(qm config "$MONITORING_VMID" | grep "^balloon:" | awk '{print $2}')
-NUMA=$(qm config "$MONITORING_VMID" | grep "^numa:" | awk '{print $2}')
+NUMA=$(qm config "$MONITORING_VMID" | grep "^numa:" | awk '{print $2}' || true)
 echo "✓ Balloon: $BALLOON (ожидается: 0)"
-echo "✓ NUMA: $NUMA (ожидается: 1)"
+echo "✓ NUMA: ${NUMA:-не задан} (vm-create-monitoring-vm.sh не настраивает numa)"
 
 AGENT=$(qm config "$MONITORING_VMID" | grep "^agent:" | awk '{print $2}' || true)
 echo "✓ Guest Agent: $AGENT (ожидается: enabled=1)"
