@@ -16,11 +16,16 @@
 #   ./scripts/redeploy-clean-full.sh --skip-steps 9,11    # пропустить конкретные шаги Фазы 1 (например, уже выполненные)
 #
 # Шаги Фазы 1 (для --from-step / --skip-steps):
-#   1 infra-install-proxmox-tools    6 vm-create-llm-vm            11 ollama-setup-models
-#   2 infra-enable-iommu             7 vm-create-monitoring-vm     12 deployment-install-guest-runtime (Monitoring)
-#   3 infra-configure-network        8 deployment-install-guest-runtime (LLM)  13 deployment-deploy-monitoring-stack
-#   4 vm-download-cloud-image        9 deployment-install-nvidia-toolkit-llm  14 proxy-deploy-nginx-proxy
-#   5 vm-create-cloudinit-template   10 deployment-deploy-llm-stack           15 infra-setup-nft-rules
+#   1 infra-install-proxmox-tools    6 vm-create-cloudinit-template  11 deployment-deploy-llm-stack
+#   2 infra-enable-iommu             7 vm-create-llm-vm              12 ollama-setup-models
+#   3 infra-configure-network        8 vm-create-monitoring-vm       13 deployment-install-guest-runtime (Monitoring)
+#   4 infra-setup-nft-rules          9 deployment-install-guest-runtime (LLM)  14 deployment-deploy-monitoring-stack
+#   5 vm-download-cloud-image       10 deployment-install-nvidia-toolkit-llm  15 proxy-deploy-nginx-proxy
+#
+# ВАЖНО: infra-setup-nft-rules (шаг 4) должен идти ДО создания любых VM/LXC —
+# без masquerade у них нет интернета, и apt/docker/ollama внутри зависают.
+# Ruleset строится только из статических значений config, поэтому не зависит
+# от того, что LLM/Monitoring VM или nginx LXC ещё не существуют.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -196,6 +201,12 @@ phase1_deploy() {
   # shellcheck disable=SC2016
   check "ip_forward enabled" bash -c '[[ "$(sysctl -n net.ipv4.ip_forward)" == "1" ]]'
 
+  # ДОЛЖНО идти до создания любых VM/LXC — без masquerade у них нет интернета,
+  # и apt/docker/ollama внутри просто зависают в ожидании apt/dpkg lock.
+  deploy_step "infra-setup-nft-rules.sh" "${SCRIPT_DIR}/infra-setup-nft-rules.sh"
+  check "DNAT table present" bash -c "nft list table ip llm_lab_nat >/dev/null 2>&1"
+  check "forward filter table present" bash -c "nft list table inet llm_lab_filter >/dev/null 2>&1"
+
   deploy_step "vm-download-cloud-image.sh" "${SCRIPT_DIR}/vm-download-cloud-image.sh"
   check "cloud image present" test -f "$UBUNTU_IMAGE_PATH"
 
@@ -226,12 +237,10 @@ phase1_deploy() {
   check "Prometheus ready" curl_ok "http://${MONITORING_IP}:9090/-/ready"
   check "Grafana healthy" curl_ok "http://${MONITORING_IP}:3000/api/health"
 
+  # nft-правила (DNAT на nginx) уже применены на шаге 4 — сама nginx LXC
+  # только теперь появляется, поэтому live HTTPS-проверка идёт здесь.
   deploy_step "proxy-deploy-nginx-proxy.sh" "${SCRIPT_DIR}/proxy-deploy-nginx-proxy.sh"
   check "nginx active in LXC ${NGINX_CTID}" bash -c "pct exec ${NGINX_CTID} -- systemctl is-active --quiet nginx"
-
-  deploy_step "infra-setup-nft-rules.sh" "${SCRIPT_DIR}/infra-setup-nft-rules.sh"
-  check "DNAT table present" bash -c "nft list table ip llm_lab_nat >/dev/null 2>&1"
-  check "forward filter table present" bash -c "nft list table inet llm_lab_filter >/dev/null 2>&1"
   check "public HTTPS entrypoint responding" curl_ok "https://${PROXMOX_HOST}/" 10
 
   "${SCRIPT_DIR}/deployment-check-llm-vm-quick.sh"
